@@ -1,0 +1,266 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum MailProvider {
+  gmail
+  imap
+  smtp
+  outlook
+}
+
+enum AuthType {
+  oauth
+  password
+}
+
+enum SyncStatus {
+  idle
+  running
+  error
+}
+
+enum AgentTriggerType {
+  manual
+  automatic
+}
+
+enum AgentResult {
+  success
+  failure
+}
+
+model User {
+  id              String                  @id @default(cuid())
+  email           String                  @unique
+  name            String?
+  createdAt       DateTime                @default(now())
+  updatedAt       DateTime                @updatedAt
+  accounts        Account[]
+  sessions        Session[]
+  threads         Thread[]
+  messages        Message[]
+  smartViews      SmartView[]
+  labels          Label[]
+  actionLogs      AgentActionLog[]
+  notionConnection NotionConnection?
+  notionMappings  NotionDatabaseMapping[]
+  notionPages     NotionPageMapping[]
+}
+
+model Account {
+  id                    String      @id @default(cuid())
+  userId                String
+  provider              MailProvider
+  email                 String
+  displayName           String
+  authType              AuthType
+  providerConfig        Json?
+  syncCursor            Json?
+  accessTokenEncrypted  String?
+  refreshTokenEncrypted String?
+  passwordEncrypted     String?
+  smtpPasswordEncrypted String?
+  syncEnabled           Boolean     @default(true)
+  syncStatus            SyncStatus  @default(idle)
+  lastSyncedAt          DateTime?
+  createdAt             DateTime    @default(now())
+  updatedAt             DateTime    @updatedAt
+  user                  User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  messages              Message[]
+  labels                Label[]
+
+  @@unique([userId, provider, email])
+  @@index([userId])
+}
+
+model Thread {
+  id                  String              @id @default(cuid())
+  userId              String
+  subjectNormalized   String
+  participants        String[]
+  lastMessageAt       DateTime
+  messageCount        Int                 @default(0)
+  linkedNotionPageIds String[]
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
+  user                User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  messages            Message[]
+  notionPages         NotionPageMapping[]
+
+  @@index([userId, lastMessageAt])
+}
+
+model Message {
+  id                String             @id @default(cuid())
+  userId            String
+  accountId         String
+  provider          MailProvider
+  providerMessageId String
+  providerThreadId  String?
+  threadId          String?
+  fromName          String?
+  fromEmail         String
+  toRecipients      String[]
+  ccRecipients      String[]
+  subject           String
+  snippet           String
+  bodyText          String?
+  bodyHtml          String?
+  receivedAt        DateTime
+  isRead            Boolean            @default(false)
+  isStarred         Boolean            @default(false)
+  isArchived        Boolean            @default(false)
+  hasAttachments    Boolean            @default(false)
+  labels            String[]
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+  user              User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  account           Account            @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  thread            Thread?            @relation(fields: [threadId], references: [id], onDelete: SetNull)
+  attachments       Attachment[]
+  analyses          AgentAnalysis[]
+  actionLogs        AgentActionLog[]
+  notionPages       NotionPageMapping[]
+
+  @@unique([accountId, providerMessageId])
+  @@index([userId, receivedAt(sort: Desc)])
+  @@index([threadId])
+}
+
+model Attachment {
+  id                   String   @id @default(cuid())
+  messageId            String
+  filename             String
+  mimeType             String
+  size                 Int
+  providerAttachmentId String
+  storageMode          String
+  createdAt            DateTime @default(now())
+  message              Message  @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  @@index([messageId])
+}
+
+model Label {
+  id              String   @id @default(cuid())
+  userId          String
+  accountId       String
+  name            String
+  providerLabelId String?
+  type            String
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  account         Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@index([userId, accountId])
+}
+
+model SmartView {
+  id         String   @id @default(cuid())
+  userId     String
+  name       String
+  conditions Json
+  sort       Json
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model AgentAnalysis {
+  id             String   @id @default(cuid())
+  messageId      String
+  summary        String
+  category       String
+  priority       String
+  requiresReply  Boolean  @default(false)
+  requiresAction Boolean  @default(false)
+  dueDate        DateTime?
+  confidence     Float
+  createdAt      DateTime @default(now())
+  message        Message  @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  @@index([messageId])
+}
+
+model AgentActionLog {
+  id          String           @id @default(cuid())
+  userId      String
+  messageId   String
+  actionType  String
+  triggerType AgentTriggerType
+  reason      String
+  result      AgentResult
+  metadata    Json?
+  notionPageId String?
+  createdAt   DateTime         @default(now())
+  user        User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  message     Message          @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  @@index([userId, messageId])
+}
+
+model NotionConnection {
+  id                   String   @id @default(cuid())
+  userId               String   @unique
+  workspaceId          String
+  workspaceName        String
+  accessTokenEncrypted String
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+  user                 User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model NotionDatabaseMapping {
+  id               String   @id @default(cuid())
+  userId           String
+  type             String
+  notionDatabaseId String
+  propertyMap      Json
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, type])
+}
+
+model Session {
+  id             String   @id @default(cuid())
+  userId         String
+  tokenHash      String   @unique
+  clientType     String
+  deviceLabel    String?
+  expiresAt      DateTime
+  lastUsedAt     DateTime?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, expiresAt])
+}
+
+model NotionPageMapping {
+  id            String   @id @default(cuid())
+  userId        String
+  messageId     String?
+  threadId      String?
+  notionPageId  String
+  mappingType   String
+  syncDirection String
+  lastSyncedAt  DateTime?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  message       Message? @relation(fields: [messageId], references: [id], onDelete: SetNull)
+  thread        Thread?  @relation(fields: [threadId], references: [id], onDelete: SetNull)
+
+  @@index([userId, mappingType])
+}

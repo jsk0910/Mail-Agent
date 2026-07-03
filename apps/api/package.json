@@ -1,0 +1,33 @@
+{
+  "name": "@mail-agent/api",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "nest start --watch",
+    "build": "nest build",
+    "lint": "eslint \"src/**/*.ts\"",
+    "typecheck": "tsc --noEmit",
+    "test:sync-replay": "tsx --test src/modules/sync/sync.service.replay.test.ts",
+    "test:mail-retry": "tsx --test src/modules/mail/mail.retry.test.ts"
+  },
+  "dependencies": {
+    "@mail-agent/shared": "file:../../packages/shared",
+    "@nestjs/common": "^11.0.0",
+    "@nestjs/config": "^4.0.4",
+    "@nestjs/core": "^11.0.0",
+    "@nestjs/platform-express": "^11.0.0",
+    "@prisma/client": "^6.16.2",
+    "class-transformer": "^0.5.1",
+    "class-validator": "^0.15.1",
+    "imapflow": "^1.4.3",
+    "reflect-metadata": "^0.2.2",
+    "rxjs": "^7.8.1"
+  },
+  "devDependencies": {
+    "@nestjs/cli": "^11.0.0",
+    "@types/node": "^22.10.0",
+    "eslint": "^9.17.0",
+    "tsx": "^4.22.4",
+    "typescript": "^5.7.2"
+  }
+}

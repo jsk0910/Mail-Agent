@@ -1,0 +1,28 @@
+{
+  "name": "mail-agent",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "npm@11.11.0",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "setup": "npm install",
+    "dev:api": "npm run build -w @mail-agent/shared && npm run dev -w @mail-agent/api",
+    "dev:web": "npm run dev -w @mail-agent/web",
+    "verify:sync-replay": "npm run test:sync-replay -w @mail-agent/api",
+    "verify:mail-retry": "npm run test:mail-retry -w @mail-agent/api",
+    "db:up": "docker compose up -d",
+    "db:down": "docker compose down",
+    "db:reset": "docker compose down -v",
+    "prisma:generate": "prisma generate",
+    "build": "npm run build --workspaces --if-present",
+    "lint": "npm run lint --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "check": "npm run typecheck"
+  },
+  "devDependencies": {
+    "prisma": "^6.16.2"
+  }
+}

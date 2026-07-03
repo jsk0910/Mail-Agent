@@ -1,0 +1,17 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "module": "CommonJS",
+    "moduleResolution": "Node",
+    "outDir": "dist",
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true,
+    "types": ["node"],
+    "paths": {
+      "@mail-agent/shared": ["packages/shared/dist/index.d.ts"],
+      "@mail-agent/shared/*": ["packages/shared/dist/*"]
+    }
+  },
+  "include": ["src/**/*.ts"]
+}
