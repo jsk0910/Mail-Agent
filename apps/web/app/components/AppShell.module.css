@@ -1,0 +1,130 @@
+.appShell {
+  min-height: 100vh;
+  padding: var(--space-3);
+  background: var(--surface-app);
+}
+
+.workspace {
+  --shell-sidebar-width: 320px;
+  position: relative;
+  display: grid;
+  grid-template-columns: var(--shell-sidebar-width) minmax(0, 1fr);
+  gap: var(--space-3);
+  min-height: calc(100vh - (2 * var(--space-3)));
+  align-items: stretch;
+}
+
+.sidebar,
+.list {
+  min-height: calc(100vh - (2 * var(--space-3)));
+  min-width: 0;
+}
+
+.detailBackdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(23, 33, 43, 0.12);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--motion-medium);
+}
+
+.detailBackdropVisible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.detail {
+  position: fixed;
+  top: var(--space-3);
+  right: var(--space-3);
+  bottom: var(--space-3);
+  width: min(64vw, 1080px);
+  min-width: 720px;
+  max-width: calc(100vw - var(--space-3));
+  min-height: 0;
+  transform: translateX(calc(100% + var(--space-3)));
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    transform var(--motion-medium),
+    opacity var(--motion-medium);
+  z-index: 20;
+}
+
+.detailVisible {
+  transform: translateX(0);
+  opacity: 1;
+  pointer-events: auto;
+}
+
+@media (max-width: 1439px) {
+  .workspace {
+    --shell-sidebar-width: 88px;
+  }
+
+  .detail {
+    width: min(68vw, 960px);
+    min-width: 640px;
+  }
+}
+
+@media (max-width: 1199px) {
+  .workspace {
+    --shell-sidebar-width: 80px;
+  }
+
+  .detail {
+    width: min(78vw, 860px);
+    min-width: 0;
+  }
+}
+
+@media (max-width: 1023px) {
+  .workspace {
+    grid-template-columns: 1fr;
+    min-height: auto;
+  }
+
+  .sidebar {
+    display: none;
+  }
+
+  .list,
+  .detail {
+    min-height: auto;
+  }
+
+  .detail {
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: 100vw;
+    max-width: 100vw;
+    border-radius: 0;
+  }
+}
+
+@media (max-width: 767px) {
+  .appShell {
+    padding: 10px;
+  }
+
+  .workspace {
+    gap: 10px;
+  }
+
+  .sidebar,
+  .list,
+  .detail {
+    min-height: auto;
+  }
+
+  .detail {
+    transform: translateY(100%);
+  }
+
+  .detailVisible {
+    transform: translateY(0);
+  }
+}

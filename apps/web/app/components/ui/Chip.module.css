@@ -1,0 +1,46 @@
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-chip);
+  background: var(--surface-recessed);
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  line-height: 1;
+}
+
+.active {
+  background: var(--accent-soft);
+  color: var(--accent-primary-hover);
+}
+
+.warning {
+  background: var(--tint-warning);
+  color: var(--warning);
+}
+
+.success {
+  background: var(--tint-success);
+  color: var(--success);
+}
+
+.danger {
+  background: var(--tint-danger);
+  color: var(--danger);
+}
+
+.buttonChip {
+  cursor: pointer;
+  transition:
+    background-color 160ms ease,
+    border-color 160ms ease,
+    color 160ms ease;
+}
+
+.buttonChip:hover:not(:disabled) {
+  background: var(--bg-hover);
+}

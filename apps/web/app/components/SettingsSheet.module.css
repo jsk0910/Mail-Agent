@@ -1,0 +1,135 @@
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 35;
+  background: rgba(23, 33, 43, 0.12);
+}
+
+.sheet {
+  position: absolute;
+  top: 0;
+  right: 0;
+  display: flex;
+  width: min(440px, 100vw);
+  height: 100vh;
+  flex-direction: column;
+  border-left: 1px solid var(--border-default);
+  background: var(--surface-raised);
+  box-shadow: var(--elevation-2);
+}
+
+.header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border-bottom: 1px solid var(--border-default);
+}
+
+.headerCopy,
+.section,
+.accountCopy {
+  display: flex;
+  flex-direction: column;
+}
+
+.headerCopy {
+  gap: var(--space-1);
+}
+
+.eyebrow,
+.subcopy,
+.accountMeta {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+}
+
+.title,
+.sectionTitle,
+.accountTitle {
+  margin: 0;
+  color: var(--text-strong);
+}
+
+.title {
+  font-size: var(--text-xl);
+  font-weight: 650;
+}
+
+.subcopy,
+.accountMeta {
+  line-height: var(--leading-normal);
+}
+
+.body {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--space-5);
+  overflow: auto;
+  padding: var(--space-4);
+}
+
+.section {
+  gap: var(--space-3);
+}
+
+.sectionHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.sectionTitle {
+  font-size: var(--text-lg);
+  font-weight: 600;
+}
+
+.cardList {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.accountCard,
+.preferenceCard,
+.infoCard {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border: 1px solid var(--border-default);
+  border-radius: 12px;
+  background: var(--surface-panel);
+}
+
+.accountCopy {
+  min-width: 0;
+  gap: 2px;
+}
+
+.accountTitle {
+  font-size: var(--text-base);
+  font-weight: 600;
+}
+
+.infoCard {
+  flex-direction: column;
+  background: var(--surface-recessed);
+}
+
+@media (max-width: 767px) {
+  .sheet {
+    width: 100vw;
+  }
+
+  .accountCard,
+  .preferenceCard {
+    flex-direction: column;
+  }
+}
