@@ -41,7 +41,7 @@ function parsePort(value: string | undefined, key: string, fallback: number): nu
 export function loadAppConfig(env: NodeJS.ProcessEnv): AppConfig {
   return {
     appEnv: env.APP_ENV?.trim() || "development",
-    apiPort: parsePort(env.API_PORT || env.PORT, "API_PORT", 4000),
+    apiPort: parsePort(env.PORT || env.API_PORT, "PORT", 4000),
     webPort: parsePort(env.WEB_PORT, "WEB_PORT", 3000),
     sessionTtlDays: parsePort(env.SESSION_TTL_DAYS, "SESSION_TTL_DAYS", 30),
     allowDevelopmentIdentity:
