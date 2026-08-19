@@ -77,7 +77,7 @@ export class LocalAiRuntime {
       body: JSON.stringify({
         model: "qwen3-4b-q4_k_m",
         temperature: 0.1,
-        max_tokens: 700,
+        max_tokens: 1500,
         response_format: { type: "json_object" },
         messages: [
           {
@@ -86,7 +86,7 @@ export class LocalAiRuntime {
           },
           {
             role: "user",
-            content: `보낸이: ${request.from}\n수신일: ${request.receivedAt}\n제목: ${request.subject}\n본문:\n${request.bodyText.slice(0, 6000)}`
+            content: `보낸이: ${request.from}\n수신일: ${request.receivedAt}\n제목: ${request.subject}\n본문:\n${request.bodyText.slice(0, 4000)}`
           }
         ]
       })
@@ -95,7 +95,46 @@ export class LocalAiRuntime {
     const payload = (await response.json()) as { choices?: Array<{ message?: { content?: string } }> };
     const content = payload.choices?.[0]?.message?.content;
     if (!content) throw new Error("로컬 AI가 빈 분석 결과를 반환했습니다.");
-    return JSON.parse(content) as Record<string, unknown>;
+    return this.parseJsonResult(content);
+  }
+
+  private parseJsonResult(raw: string): Record<string, unknown> {
+    const trimmed = raw.trim();
+    try {
+      return JSON.parse(trimmed) as Record<string, unknown>;
+    } catch {
+      const jsonMatch = trimmed.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        try {
+          return JSON.parse(jsonMatch[0]) as Record<string, unknown>;
+        } catch {
+          const repaired = this.attemptJsonRepair(jsonMatch[0]);
+          if (repaired) {
+            try {
+              return JSON.parse(repaired) as Record<string, unknown>;
+            } catch {
+              // ignore
+            }
+          }
+        }
+      }
+      throw new Error(`로컬 AI 출력 파싱 실패: ${trimmed.slice(0, 150)}...`);
+    }
+  }
+
+  private attemptJsonRepair(jsonStr: string): string | null {
+    let s = jsonStr.trim();
+    const quoteCount = (s.match(/(?<!\\)"/g) || []).length;
+    if (quoteCount % 2 !== 0) {
+      s += '"';
+    }
+    const openBrackets = (s.match(/\[/g) || []).length;
+    const closeBrackets = (s.match(/\]/g) || []).length;
+    for (let i = 0; i < openBrackets - closeBrackets; i++) s += "]";
+    const openBraces = (s.match(/\{/g) || []).length;
+    const closeBraces = (s.match(/\}/g) || []).length;
+    for (let i = 0; i < openBraces - closeBraces; i++) s += "}";
+    return s;
   }
 
   stop() {
