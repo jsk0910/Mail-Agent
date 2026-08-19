@@ -6,10 +6,7 @@ export class GoogleOAuthStartDto {
   clientType?: "web" | "desktop";
 
   @IsOptional()
-  @IsUrl({
-    require_tld: false,
-    require_protocol: true
-  })
+  @IsString()
   @MaxLength(512)
   returnUri?: string;
 }
