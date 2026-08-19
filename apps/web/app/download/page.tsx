@@ -114,7 +114,7 @@ export default function DownloadPage() {
       </section>
 
       {/* Local Advantage Features */}
-      <section className={styles.featureGrid}>
+      <section className={styles.featureGrid} style={{ marginBottom: "48px" }}>
         <div className={styles.featureBox}>
           <div className={styles.featureBoxIcon}>
             <LayersIcon style={{ width: 20, height: 20 }} />
@@ -146,6 +146,43 @@ export default function DownloadPage() {
             인터넷 연결이 불안정하거나 비행기 모드에서도 기존 메일 검색, 작성, AI 초안 작성이
             즉시 가능합니다.
           </p>
+        </div>
+      </section>
+
+      {/* Local Build & Run Guide */}
+      <section
+        style={{
+          width: "100%",
+          maxWidth: "900px",
+          background: "rgba(15, 23, 42, 0.8)",
+          border: "1px solid rgba(99, 102, 241, 0.2)",
+          borderRadius: "16px",
+          padding: "28px 32px"
+        }}
+      >
+        <h3 style={{ fontSize: "18px", fontWeight: 700, margin: "0 0 8px", color: "#ffffff" }}>
+          ⚡ 로컬 PC에서 즉시 실행 및 패키징 빌드하기
+        </h3>
+        <p style={{ fontSize: "14px", color: "#94a3b8", margin: "0 0 16px", lineHeight: 1.6 }}>
+          현재 저장소 코드를 내려받은 상태라면 터미널에서 다음 명령어로 데스크탑 앱을 즉시 띄우거나 설치 파일(.zip)을 생성할 수 있습니다:
+        </p>
+
+        <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+          <div>
+            <span style={{ fontSize: "13px", color: "#cbd5e1", fontWeight: 600 }}>1. 데스크탑 앱 즉시 실행 (개발 모드)</span>
+            <pre style={{ margin: "6px 0 0", padding: "12px 16px", background: "#0b0f19", border: "1px solid rgba(255,255,255,0.08)", borderRadius: "8px", color: "#a5b4fc", fontSize: "13px", fontFamily: "monospace", overflowX: "auto" }}>
+              npm run dev:desktop
+            </pre>
+          </div>
+          <div>
+            <span style={{ fontSize: "13px", color: "#cbd5e1", fontWeight: 600 }}>2. Windows 독립 실행 패키지(.zip) 생성</span>
+            <pre style={{ margin: "6px 0 0", padding: "12px 16px", background: "#0b0f19", border: "1px solid rgba(255,255,255,0.08)", borderRadius: "8px", color: "#a5b4fc", fontSize: "13px", fontFamily: "monospace", overflowX: "auto" }}>
+              npm run package:desktop:win
+            </pre>
+            <span style={{ fontSize: "12px", color: "#64748b", display: "inline-block", marginTop: "4px" }}>
+              빌드 완료 시 <code>apps/desktop/release/</code> 경로에 Windows 실행용 압축 파일이 생성됩니다.
+            </span>
+          </div>
         </div>
       </section>
     </div>
