@@ -6,6 +6,7 @@ COPY apps/web/package.json apps/web/package.json
 COPY apps/desktop/package.json apps/desktop/package.json
 COPY packages/shared/package.json packages/shared/package.json
 RUN npm ci
+COPY tsconfig.base.json ./
 COPY prisma prisma
 COPY packages/shared packages/shared
 COPY apps/api apps/api

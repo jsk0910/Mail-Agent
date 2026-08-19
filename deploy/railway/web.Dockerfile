@@ -10,6 +10,7 @@ COPY apps/web/package.json apps/web/package.json
 COPY apps/desktop/package.json apps/desktop/package.json
 COPY packages/shared/package.json packages/shared/package.json
 RUN npm ci
+COPY tsconfig.base.json ./
 COPY packages/shared packages/shared
 COPY apps/web apps/web
 RUN npm run build -w @mail-agent/shared && npm run build -w @mail-agent/web
