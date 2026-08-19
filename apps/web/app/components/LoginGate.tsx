@@ -87,6 +87,22 @@ export function LoginGate({ onLogin, error }: LoginGateProps) {
           Google OAuth 2.0 공식 표준을 통해 안전하게 인증되며,<br />
           비밀번호는 일체 저장되지 않습니다.
         </p>
+
+        <div style={{ marginTop: "18px", paddingTop: "18px", borderTop: "1px solid rgba(255, 255, 255, 0.08)", width: "100%" }}>
+          <a
+            href="/download"
+            style={{
+              color: "#818cf8",
+              fontSize: "13px",
+              textDecoration: "none",
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "6px"
+            }}
+          >
+            <span>💻 데스크탑 앱(100% 로컬 AI & DB) 다운로드 →</span>
+          </a>
+        </div>
       </div>
     </div>
   );

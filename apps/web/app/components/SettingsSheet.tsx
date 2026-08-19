@@ -174,6 +174,42 @@ export function SettingsSheet({
               ))}
             </div>
           </section>
+
+          <section className={styles.section}>
+            <div className={styles.sectionHeader}>
+              <h3 className={styles.sectionTitle}>Desktop App (Local AI)</h3>
+              <Chip tone="active">Privacy</Chip>
+            </div>
+            <div className={styles.cardList}>
+              <article className={styles.infoCard} style={{ gap: "8px" }}>
+                <span className={styles.accountTitle}>100% 온디바이스 로컬 AI & DB</span>
+                <span className={styles.accountMeta}>
+                  데이터가 외부로 나가지 않는 완전 격리형 데스크탑 버전을 사용해 보세요.
+                </span>
+                <a
+                  href="/download"
+                  target="_blank"
+                  rel="noreferrer"
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    padding: "8px 14px",
+                    background: "var(--surface-recessed, #1e293b)",
+                    border: "1px solid var(--border-soft, rgba(255, 255, 255, 0.15))",
+                    borderRadius: "8px",
+                    color: "#f8fafc",
+                    fontSize: "13px",
+                    fontWeight: 500,
+                    textDecoration: "none",
+                    marginTop: "4px"
+                  }}
+                >
+                  데스크탑 앱 설치 페이지 이동 →
+                </a>
+              </article>
+            </div>
+          </section>
         </div>
       </aside>
     </div>
