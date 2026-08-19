@@ -269,6 +269,26 @@
   text-transform: capitalize;
 }
 
+.aiBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 22px;
+  padding: 0 8px;
+  border-radius: var(--radius-chip);
+  background: color-mix(in srgb, #8b5cf6 15%, var(--surface-recessed));
+  color: #6d28d9;
+  border: 1px solid color-mix(in srgb, #8b5cf6 30%, transparent);
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+
+.aiReplyBadge {
+  background: color-mix(in srgb, #0ea5e9 15%, var(--surface-recessed));
+  color: #0284c7;
+  border: 1px solid color-mix(in srgb, #0ea5e9 30%, transparent);
+}
+
 .time {
   margin-left: auto;
   color: var(--text-muted);

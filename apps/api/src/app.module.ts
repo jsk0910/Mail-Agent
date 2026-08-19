@@ -14,6 +14,7 @@ import { AccountsService } from "./modules/accounts/accounts.service";
 import { DatabaseModule } from "./modules/database/database.module";
 import { HealthController } from "./modules/health/health.controller";
 import { MailController } from "./modules/mail/mail.controller";
+import { MailAnalyzerService } from "./modules/mail/mail-analyzer.service";
 import { MailMockSourceService } from "./modules/mail/mail-mock-source.service";
 import { MailNormalizerService } from "./modules/mail/mail-normalizer.service";
 import { MailRepository } from "./modules/mail/mail.repository";
@@ -27,6 +28,10 @@ import { SmtpController } from "./modules/providers/smtp.controller";
 import { SyncController } from "./modules/sync/sync.controller";
 import { SyncService } from "./modules/sync/sync.service";
 
+import { AgentController } from "./modules/agent/agent.controller";
+import { AgentService } from "./modules/agent/agent.service";
+import { LocalLlmService } from "./modules/agent/local-llm.service";
+
 @Module({
   imports: [AppConfigModule, DatabaseModule],
   controllers: [
@@ -36,7 +41,8 @@ import { SyncService } from "./modules/sync/sync.service";
     GoogleOAuthController,
     SessionController,
     SyncController,
-    SmtpController
+    SmtpController,
+    AgentController
   ],
   providers: [
     {
@@ -48,6 +54,7 @@ import { SyncService } from "./modules/sync/sync.service";
     EncryptionService,
     GoogleOAuthService,
     SessionService,
+    MailAnalyzerService,
     MailMockSourceService,
     MailNormalizerService,
     MailRepository,
@@ -57,7 +64,9 @@ import { SyncService } from "./modules/sync/sync.service";
     GmailConnector,
     ImapConnector,
     SmtpSender,
-    ProviderConfigService
+    ProviderConfigService,
+    LocalLlmService,
+    AgentService
   ]
 })
 export class AppModule {}

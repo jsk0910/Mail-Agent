@@ -176,17 +176,27 @@ model SmartView {
 }
 
 model AgentAnalysis {
-  id             String   @id @default(cuid())
-  messageId      String
-  summary        String
-  category       String
-  priority       String
-  requiresReply  Boolean  @default(false)
-  requiresAction Boolean  @default(false)
-  dueDate        DateTime?
-  confidence     Float
-  createdAt      DateTime @default(now())
-  message        Message  @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  id               String   @id @default(cuid())
+  messageId        String
+  source           String   @default("heuristic")
+  status           String   @default("completed")
+  model            String?
+  promptVersion    String?
+  qualityIssues    String[] @default([])
+  summary          String
+  category         String
+  priority         String
+  priorityReason   String?
+  intent           String?
+  keyPoints        String[] @default([])
+  requiresReply    Boolean  @default(false)
+  requiresAction   Boolean  @default(false)
+  dueDate          DateTime?
+  suggestedReply   String?
+  suggestedActions String[] @default([])
+  confidence       Float
+  createdAt        DateTime @default(now())
+  message          Message  @relation(fields: [messageId], references: [id], onDelete: Cascade)
 
   @@index([messageId])
 }

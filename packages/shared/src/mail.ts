@@ -166,6 +166,7 @@ export interface MessageSummary {
   isStarred: boolean;
   hasAttachments: boolean;
   labels: string[];
+  analysis?: AgentAnalysis;
 }
 
 export interface Attachment {
@@ -184,11 +185,19 @@ export interface MessageDetail extends MessageSummary {
   bodyText: string;
   bodyHtml: string;
   attachments: Attachment[];
+  analysis?: AgentAnalysis;
+  threadMessages?: MessageDetail[];
 }
 
 export interface NormalizedMailRecord {
   thread: Thread;
   message: MessageDetail;
+}
+
+export interface OutboundAttachmentPayload {
+  filename: string;
+  mimeType: string;
+  contentBase64: string;
 }
 
 export interface MailComposerPayload {
@@ -199,6 +208,10 @@ export interface MailComposerPayload {
   subject: string;
   bodyText: string;
   bodyHtml?: string;
+  threadId?: string;
+  inReplyTo?: string;
+  references?: string;
+  attachments?: OutboundAttachmentPayload[];
 }
 
 export interface ReplyPayload {
@@ -220,12 +233,22 @@ export interface Thread {
 export interface AgentAnalysis {
   id: string;
   messageId: string;
+  source?: "heuristic" | "qwen";
+  status?: "completed" | "invalid" | "failed";
+  model?: string;
+  promptVersion?: string;
+  qualityIssues?: string[];
   summary: string;
   category: string;
   priority: "low" | "medium" | "high";
+  priorityReason?: string;
+  intent?: string;
+  keyPoints?: string[];
   requiresReply: boolean;
   requiresAction: boolean;
   dueDate?: string;
+  suggestedReply?: string;
+  suggestedActions?: string[];
   confidence: number;
   createdAt: string;
 }

@@ -1,4 +1,4 @@
-import { Injectable, UnauthorizedException } from "@nestjs/common";
+import { BadRequestException, Injectable, UnauthorizedException } from "@nestjs/common";
 import { AuthType, MailProvider } from "@prisma/client";
 import { Account } from "@mail-agent/shared";
 
@@ -8,6 +8,7 @@ import { AppConfigService } from "../../config/app-config.service";
 import { AccountsRepository } from "../accounts/accounts.repository";
 import { toSharedAccount } from "../accounts/accounts.mapper";
 import { GoogleOAuthCallbackDto, GoogleOAuthStartDto } from "./google-oauth.types";
+import { SessionService } from "./session.service";
 
 interface GoogleOAuthStatePayload {
   user: AuthenticatedUserContext;
@@ -44,17 +45,20 @@ export class GoogleOAuthService {
   constructor(
     private readonly appConfigService: AppConfigService,
     private readonly encryptionService: EncryptionService,
-    private readonly accountsRepository: AccountsRepository
+    private readonly accountsRepository: AccountsRepository,
+    private readonly sessionService: SessionService
   ) {}
 
   createAuthorizationRequest(
     user: AuthenticatedUserContext,
     input: GoogleOAuthStartDto
   ): { authUrl: string; state: string } {
+    const clientType = input.clientType ?? "web";
+    const returnUri = this.validateReturnUri(clientType, input.returnUri);
     const statePayload: GoogleOAuthStatePayload = {
       user,
-      clientType: input.clientType ?? "web",
-      returnUri: input.returnUri,
+      clientType,
+      returnUri,
       createdAt: new Date().toISOString()
     };
 
@@ -86,6 +90,7 @@ export class GoogleOAuthService {
       provider: "gmail";
       clientType: "web" | "desktop";
       hasRefreshToken: boolean;
+      sessionToken?: string;
       returnUri?: string;
       nextUrl?: string;
     };
@@ -93,8 +98,17 @@ export class GoogleOAuthService {
     const statePayload = this.decodeState(input.state);
     const tokenResponse = await this.exchangeCodeForTokens(input.code);
     const profile = await this.fetchProfile(tokenResponse.access_token);
+    const profileUser: AuthenticatedUserContext = {
+      email: profile.email,
+      name: profile.name || profile.email,
+      source: "session"
+    };
+    const accountOwner =
+      statePayload.user.source === "session" && statePayload.user.email
+        ? statePayload.user
+        : profileUser;
 
-    const account = await this.accountsRepository.upsertForUser(statePayload.user, {
+    const account = await this.accountsRepository.upsertForUser(accountOwner, {
       provider: MailProvider.gmail,
       email: profile.email,
       displayName: profile.name || profile.email,
@@ -116,15 +130,30 @@ export class GoogleOAuthService {
         : undefined
     });
 
+    const desktopSession =
+      statePayload.clientType === "desktop"
+        ? await this.sessionService.createSessionForIdentity(
+            { email: accountOwner.email, name: accountOwner.name },
+            { clientType: "desktop", deviceLabel: "Mail Agent Desktop" }
+          )
+        : undefined;
+    const callbackParams = new URLSearchParams({
+      status: "success",
+      provider: "gmail",
+      accountId: account.id
+    });
+    if (desktopSession) callbackParams.set("sessionToken", desktopSession.sessionToken);
+
     return {
       item: toSharedAccount(account),
       connection: {
         provider: "gmail",
         clientType: statePayload.clientType,
         hasRefreshToken: Boolean(tokenResponse.refresh_token || account.refreshTokenEncrypted),
+        sessionToken: desktopSession?.sessionToken,
         returnUri: statePayload.returnUri,
         nextUrl: statePayload.returnUri
-          ? `${statePayload.returnUri}${statePayload.returnUri.includes("?") ? "&" : "?"}status=success&provider=gmail&accountId=${account.id}`
+          ? `${statePayload.returnUri}${statePayload.returnUri.includes("?") ? "&" : "?"}${callbackParams.toString()}`
           : undefined
       }
     };
@@ -134,10 +163,40 @@ export class GoogleOAuthService {
     try {
       const encrypted = Buffer.from(state, "base64url").toString("utf8");
       const json = this.encryptionService.decrypt(encrypted);
-      return JSON.parse(json) as GoogleOAuthStatePayload;
+      const payload = JSON.parse(json) as GoogleOAuthStatePayload;
+      const createdAt = new Date(payload.createdAt).getTime();
+      if (!Number.isFinite(createdAt) || Date.now() - createdAt > 10 * 60 * 1000) {
+        throw new Error("Expired OAuth state");
+      }
+      payload.returnUri = this.validateReturnUri(payload.clientType, payload.returnUri);
+      return payload;
     } catch {
       throw new UnauthorizedException("Invalid OAuth state.");
     }
+  }
+
+  private validateReturnUri(
+    clientType: "web" | "desktop",
+    returnUri?: string
+  ): string | undefined {
+    if (!returnUri) return undefined;
+    if (clientType === "desktop") {
+      if (returnUri !== "mailagent://oauth") {
+        throw new BadRequestException("Invalid desktop OAuth return URI.");
+      }
+      return returnUri;
+    }
+
+    let parsed: URL;
+    try {
+      parsed = new URL(returnUri);
+    } catch {
+      throw new BadRequestException("Invalid web OAuth return URI.");
+    }
+    if (!this.appConfigService.oauthAllowedReturnOrigins.includes(parsed.origin)) {
+      throw new BadRequestException("Web OAuth return origin is not allowed.");
+    }
+    return parsed.origin;
   }
 
   private async exchangeCodeForTokens(code: string): Promise<GoogleTokenResponse> {

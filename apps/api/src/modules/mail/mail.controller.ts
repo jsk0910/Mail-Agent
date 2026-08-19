@@ -1,4 +1,5 @@
-import { Body, Controller, Get, Param, Patch, Post } from "@nestjs/common";
+import { Body, Controller, Get, Param, Patch, Post, Res } from "@nestjs/common";
+import type { Response } from "express";
 
 import { CurrentUser } from "../../common/auth/current-user.decorator";
 import { AuthenticatedUserContext } from "../../common/auth/authenticated-user.types";
@@ -33,6 +34,28 @@ export class MailController {
     return {
       item: await this.mailService.getMessage(user, messageId)
     };
+  }
+
+  @Get("messages/:messageId/attachments/:attachmentId/download")
+  async downloadAttachment(
+    @CurrentUser() user: AuthenticatedUserContext,
+    @Param("messageId") messageId: string,
+    @Param("attachmentId") attachmentId: string,
+    @Res() res: Response
+  ) {
+    const attachment = await this.mailService.downloadAttachment(
+      user,
+      messageId,
+      attachmentId
+    );
+
+    res.setHeader("Content-Type", attachment.mimeType);
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="${encodeURIComponent(attachment.filename)}"`
+    );
+    res.setHeader("Content-Length", attachment.size);
+    res.send(attachment.data);
   }
 
   @Get("messages/:messageId/action-logs/latest-failure")

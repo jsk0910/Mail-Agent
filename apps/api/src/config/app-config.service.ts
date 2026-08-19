@@ -23,6 +23,14 @@ export class AppConfigService {
     return this.configService.get("sessionTtlDays", { infer: true });
   }
 
+  get allowDevelopmentIdentity() {
+    return this.configService.get("allowDevelopmentIdentity", { infer: true });
+  }
+
+  get oauthAllowedReturnOrigins() {
+    return this.configService.get("oauthAllowedReturnOrigins", { infer: true });
+  }
+
   get defaultUserEmail() {
     return this.configService.get("defaultUserEmail", { infer: true });
   }

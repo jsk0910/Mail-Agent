@@ -1,13 +1,19 @@
+"use client";
+
+import { useEffect, useRef, useState } from "react";
 import { Account } from "@mail-agent/shared";
 import { Chip } from "./ui/Chip";
 import {
+  ArchiveIcon,
+  ChevronDownIcon,
   FolderIcon,
   InboxIcon,
   LayersIcon,
   MailIcon,
   SearchIcon,
   SettingsIcon,
-  SparkIcon
+  SparkIcon,
+  StarIcon
 } from "./icons";
 import { Kbd } from "./ui/Kbd";
 import styles from "./AppSidebar.module.css";
@@ -55,6 +61,35 @@ function joinClassNames(...values: Array<string | false | null | undefined>) {
   return values.filter(Boolean).join(" ");
 }
 
+function getInitials(name?: string, fallback = "A") {
+  if (!name || !name.trim()) {
+    return fallback;
+  }
+  const parts = name.trim().split(/\s+/);
+  if (parts.length >= 2) {
+    return (parts[0][0] + parts[1][0]).toUpperCase();
+  }
+  return name.slice(0, 2).toUpperCase();
+}
+
+function getNavIcon(key: string) {
+  switch (key) {
+    case "personal":
+      return <SparkIcon width={16} height={16} />;
+    case "unread":
+      return <InboxIcon width={16} height={16} />;
+    case "starred":
+      return <StarIcon width={16} height={16} />;
+    case "archive":
+      return <ArchiveIcon width={16} height={16} />;
+    case "trash":
+      return <FolderIcon width={16} height={16} />;
+    case "all":
+    default:
+      return <InboxIcon width={16} height={16} />;
+  }
+}
+
 export function AppSidebar({
   accounts,
   activeAccountId,
@@ -69,48 +104,154 @@ export function AppSidebar({
   onViewSelect,
   smartViewItems
 }: AppSidebarProps) {
-  const primaryItems = items.filter((item) => item.key === "all" || item.key === "unread" || item.key === "starred");
-  const folderItems = items.filter((item) => item.key === "archive" || item.key === "trash");
+  const [isDropdownOpen, setIsDropdownOpen] = useState(false);
+  const dropdownRef = useRef<HTMLDivElement | null>(null);
+
+  const activeAccount = accounts.find((item) => item.id === activeAccountId);
   const unifiedUnreadCount = Object.values(accountUnreadCounts).reduce(
     (total, count) => total + count,
     0
   );
 
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+        setIsDropdownOpen(false);
+      }
+    }
+
+    if (isDropdownOpen) {
+      document.addEventListener("mousedown", handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, [isDropdownOpen]);
+
   return (
     <aside className={styles.sidebar}>
-      <div className={styles.brand}>
-        <span className={styles.brandMark}>
-          <MailIcon width={16} height={16} />
-        </span>
-        <div className={styles.brandCopy}>
-          <p className={styles.brandTitle}>Mail Agent</p>
-          <span className={styles.brandMeta}>Unified inbox workspace</span>
-        </div>
-      </div>
+      {/* Top Section: Accounts Dropdown */}
+      <div className={styles.accountSelectorWrap} ref={dropdownRef}>
+        <button
+          className={styles.accountSelectorButton}
+          type="button"
+          onClick={() => setIsDropdownOpen((prev) => !prev)}
+          aria-expanded={isDropdownOpen}
+          aria-haspopup="true"
+        >
+          <span className={styles.accountAvatar}>
+            {activeAccountId === "all" ? (
+              <MailIcon width={16} height={16} />
+            ) : (
+              getInitials(activeAccount?.displayName || activeAccount?.email, "U")
+            )}
+          </span>
+          <div className={styles.accountSelectorCopy}>
+            <span className={styles.accountSelectorName}>
+              {activeAccountId === "all"
+                ? "All Accounts"
+                : activeAccount?.displayName || activeAccount?.email || "Account"}
+            </span>
+            <span className={styles.accountSelectorMeta}>
+              {activeAccountId === "all"
+                ? `${accounts.length} connected`
+                : activeAccount?.email || "Active"}
+            </span>
+          </div>
+          <span
+            className={joinClassNames(
+              styles.accountSelectorChevron,
+              isDropdownOpen && styles.accountSelectorChevronOpen
+            )}
+          >
+            <ChevronDownIcon width={14} height={14} />
+          </span>
+        </button>
 
-      <section className={styles.section} aria-label="Main navigation">
-        <div className={styles.sectionHeader}>
-          <p className={styles.sectionTitle}>Navigation</p>
-        </div>
-        <div className={styles.navList}>
-          {primaryItems.map((item) => (
+        {isDropdownOpen && (
+          <div className={styles.accountDropdownMenu} role="menu">
             <button
-              key={item.key}
               className={joinClassNames(
-                styles.navButton,
-                activeView === item.key && styles.navButtonActive
+                styles.accountDropdownItem,
+                activeAccountId === "all" && styles.accountDropdownItemActive
               )}
               type="button"
-              onClick={() => onViewSelect(item.key)}
+              role="menuitem"
+              onClick={() => {
+                onAccountSelect("all");
+                setIsDropdownOpen(false);
+              }}
             >
-              <InboxIcon width={16} height={16} />
-              <span className={styles.navLabel}>{item.label}</span>
-              <span className={styles.navCount}>{item.count}</span>
+              <span className={styles.accountAvatar}>
+                <MailIcon width={14} height={14} />
+              </span>
+              <div className={styles.accountCopy}>
+                <span className={styles.accountLabel}>All Accounts</span>
+                <span className={styles.accountMeta}>Unified inbox scope</span>
+              </div>
+              <div className={styles.accountItemMeta}>
+                <span className={styles.accountCount}>{unifiedUnreadCount}</span>
+              </div>
             </button>
-          ))}
-        </div>
-      </section>
 
+            <div className={styles.dropdownDivider} />
+
+            {accounts.map((account) => (
+              <button
+                key={account.id}
+                className={joinClassNames(
+                  styles.accountDropdownItem,
+                  activeAccountId === account.id && styles.accountDropdownItemActive
+                )}
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  onAccountSelect(account.id);
+                  setIsDropdownOpen(false);
+                }}
+              >
+                <span className={styles.accountAvatar}>
+                  {getInitials(account.displayName || account.email, "U")}
+                </span>
+                <div className={styles.accountCopy}>
+                  <span className={styles.accountLabel}>{account.displayName}</span>
+                  <span className={styles.accountMeta}>{account.email}</span>
+                </div>
+                <div className={styles.accountItemMeta}>
+                  <span
+                    className={joinClassNames(styles.accountStatus, getStatusTone(account))}
+                    title={formatSyncStatus(account)}
+                  />
+                  <span className={styles.accountCount}>
+                    {accountUnreadCounts[account.id] ?? 0}
+                  </span>
+                </div>
+              </button>
+            ))}
+
+            <div className={styles.dropdownDivider} />
+
+            <button
+              className={styles.accountDropdownItem}
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                setIsDropdownOpen(false);
+                onSettingsOpen();
+              }}
+            >
+              <span className={styles.accountAvatar}>+</span>
+              <div className={styles.accountCopy}>
+                <span className={styles.accountLabel}>Add Account</span>
+                <span className={styles.accountMeta}>Connect Google or IMAP</span>
+              </div>
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* 1. Smart Views (Combined with AI briefings) */}
       <section className={styles.section} aria-label="Smart views">
         <div className={styles.sectionHeader}>
           <p className={styles.sectionTitle}>Smart views</p>
@@ -136,22 +277,13 @@ export function AppSidebar({
         </div>
       </section>
 
-      <section className={styles.section} aria-label="Labels and folders">
+      {/* 2. Navigation (Combined with Labels & Folders) */}
+      <section className={styles.section} aria-label="Navigation">
         <div className={styles.sectionHeader}>
-          <p className={styles.sectionTitle}>Labels & folders</p>
+          <p className={styles.sectionTitle}>Navigation</p>
         </div>
         <div className={styles.navList}>
-          <div className={styles.previewRow}>
-            <div className={styles.previewIcon}>
-              <LayersIcon width={16} height={16} />
-            </div>
-            <div className={styles.previewCopy}>
-              <span className={styles.previewLabel}>Categories</span>
-              <span className={styles.previewMeta}>Triaged labels and source-aware organization.</span>
-            </div>
-            <Chip>Next</Chip>
-          </div>
-          {folderItems.map((item) => (
+          {items.map((item) => (
             <button
               key={item.key}
               className={joinClassNames(
@@ -161,97 +293,25 @@ export function AppSidebar({
               type="button"
               onClick={() => onViewSelect(item.key)}
             >
-              <FolderIcon width={16} height={16} />
+              {getNavIcon(item.key)}
               <span className={styles.navLabel}>{item.label}</span>
               <span className={styles.navCount}>{item.count}</span>
             </button>
           ))}
-        </div>
-      </section>
-
-      <section className={styles.section} aria-label="AI briefings">
-        <div className={styles.sectionHeader}>
-          <p className={styles.sectionTitle}>AI briefings</p>
-        </div>
-        <div className={styles.briefingCard}>
-          <div className={styles.briefingHeader}>
-            <SparkIcon width={16} height={16} />
-            <span className={styles.briefingTitle}>Daily brief</span>
-            <Chip tone="active">Soon</Chip>
-          </div>
-          <p className={styles.briefingCopy}>
-            A compact summary area for priorities, follow-ups, and suggested actions.
-          </p>
-        </div>
-      </section>
-
-      <section className={styles.section} aria-label="Accounts">
-        <div className={styles.sectionHeader}>
-          <p className={styles.sectionTitle}>Accounts</p>
-          <Chip>{accounts.length + 1} sources</Chip>
-        </div>
-        <div className={styles.accountList}>
-          <button
-            className={joinClassNames(
-              styles.accountButton,
-              activeAccountId === "all" && styles.accountButtonActive
-            )}
-            type="button"
-            onClick={() => onAccountSelect("all")}
-          >
-            <span className={joinClassNames(styles.accountStatus, styles.statusSuccess)} />
-            <div className={styles.accountCopy}>
-              <span className={styles.accountLabel}>All accounts</span>
-              <span className={styles.accountMeta}>Unified inbox scope</span>
+          <div className={styles.previewRow}>
+            <div className={styles.previewIcon}>
+              <LayersIcon width={16} height={16} />
             </div>
-            <span className={styles.accountCount}>{unifiedUnreadCount}</span>
-          </button>
-          {accounts.map((account) => (
-            <button
-              key={account.id}
-              className={joinClassNames(
-                styles.accountButton,
-                activeAccountId === account.id && styles.accountButtonActive
-              )}
-              type="button"
-              onClick={() => onAccountSelect(account.id)}
-            >
-              <span className={joinClassNames(styles.accountStatus, getStatusTone(account))} />
-              <div className={styles.accountCopy}>
-                <span className={styles.accountLabel}>{account.displayName}</span>
-                <span className={styles.accountMeta}>{formatSyncStatus(account)}</span>
-                {account.syncStatus === "running" && <span className={styles.syncProgress} />}
-              </div>
-              {account.syncStatus === "error" ? (
-                <span className={styles.accountActionWrap}>
-                  <span className={styles.accountMetaAction}>Issue</span>
-                  <span
-                    className={styles.reconnectButton}
-                    role="button"
-                    tabIndex={0}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      onReconnectAccount(account.id);
-                    }}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter" || event.key === " ") {
-                        event.preventDefault();
-                        event.stopPropagation();
-                        onReconnectAccount(account.id);
-                      }
-                    }}
-                  >
-                    Reconnect
-                  </span>
-                </span>
-              ) : (
-                <span className={styles.accountCount}>{accountUnreadCounts[account.id] ?? 0}</span>
-              )}
-            </button>
-          ))}
+            <div className={styles.previewCopy}>
+              <span className={styles.previewLabel}>Categories</span>
+              <span className={styles.previewMeta}>Triaged labels & categories.</span>
+            </div>
+            <Chip>Next</Chip>
+          </div>
         </div>
       </section>
 
+      {/* Footer: Command Menu & Settings */}
       <div className={styles.footer}>
         <button className={styles.footerLink} type="button" onClick={onCommandOpen}>
           <SearchIcon width={16} height={16} />

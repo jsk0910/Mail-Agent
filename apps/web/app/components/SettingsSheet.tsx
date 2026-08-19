@@ -9,6 +9,9 @@ interface SettingsSheetProps {
   open: boolean;
   onClose: () => void;
   onToggleAi: (accountId: string) => void;
+  onConnectGoogle?: () => void;
+  onSyncAccount?: (accountId: string) => void;
+  syncingAccountId?: string | null;
 }
 
 export function SettingsSheet({
@@ -16,7 +19,10 @@ export function SettingsSheet({
   aiEnabledByAccount,
   open,
   onClose,
-  onToggleAi
+  onToggleAi,
+  onConnectGoogle,
+  onSyncAccount,
+  syncingAccountId
 }: SettingsSheetProps) {
   if (!open) {
     return null;
@@ -51,23 +57,66 @@ export function SettingsSheet({
               <Chip>{accounts.length} active</Chip>
             </div>
             <div className={styles.cardList}>
-              {accounts.map((account) => (
-                <article key={account.id} className={styles.accountCard}>
-                  <div className={styles.accountCopy}>
-                    <span className={styles.accountTitle}>{account.displayName}</span>
-                    <span className={styles.accountMeta}>
-                      {account.email} · {account.provider}
-                    </span>
-                  </div>
-                  <Chip tone={account.syncStatus === "error" ? "danger" : account.syncStatus === "running" ? "active" : "success"}>
-                    {account.syncStatus === "running"
-                      ? "Syncing"
-                      : account.syncStatus === "error"
-                        ? "Needs reconnect"
-                        : "Connected"}
-                  </Chip>
-                </article>
-              ))}
+              {accounts.length === 0 ? (
+                <div className={styles.infoCard}>
+                  <span className={styles.accountMeta}>No accounts connected yet. Add one below.</span>
+                </div>
+              ) : (
+                accounts.map((account) => (
+                  <article key={account.id} className={styles.accountCard}>
+                    <div className={styles.accountCopy}>
+                      <span className={styles.accountTitle}>{account.displayName}</span>
+                      <span className={styles.accountMeta}>
+                        {account.email} · {account.provider}
+                      </span>
+                    </div>
+                    <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                      <Chip tone={account.syncStatus === "error" ? "danger" : account.syncStatus === "running" ? "active" : "success"}>
+                        {account.syncStatus === "running"
+                          ? "Syncing"
+                          : account.syncStatus === "error"
+                            ? "Needs reconnect"
+                            : "Connected"}
+                      </Chip>
+                      {onSyncAccount && (
+                        <Button
+                          compact
+                          type="button"
+                          variant="secondary"
+                          disabled={syncingAccountId === account.id}
+                          onClick={() => onSyncAccount(account.id)}
+                        >
+                          {syncingAccountId === account.id ? "Syncing..." : "Sync"}
+                        </Button>
+                      )}
+                    </div>
+                  </article>
+                ))
+              )}
+            </div>
+          </section>
+
+          <section className={styles.section}>
+            <div className={styles.sectionHeader}>
+              <h3 className={styles.sectionTitle}>Add account</h3>
+            </div>
+            <div className={styles.cardList}>
+              <article className={styles.infoCard} style={{ gap: "8px" }}>
+                <span className={styles.accountTitle}>Google (Gmail)</span>
+                <span className={styles.accountMeta}>
+                  Connect with OAuth to sync mail, threads, and labels directly from Gmail.
+                </span>
+                {onConnectGoogle && (
+                  <Button
+                    compact
+                    type="button"
+                    variant="primary"
+                    onClick={onConnectGoogle}
+                  >
+                    Connect Google Account
+                  </Button>
+                )}
+              </article>
             </div>
           </section>
 
@@ -97,26 +146,6 @@ export function SettingsSheet({
                   </Button>
                 </article>
               ))}
-            </div>
-          </section>
-
-          <section className={styles.section}>
-            <div className={styles.sectionHeader}>
-              <h3 className={styles.sectionTitle}>Next actions</h3>
-            </div>
-            <div className={styles.cardList}>
-              <article className={styles.infoCard}>
-                <span className={styles.accountTitle}>Add account</span>
-                <span className={styles.accountMeta}>
-                  Gmail, IMAP, and Outlook connection flows will land in this sheet next.
-                </span>
-              </article>
-              <article className={styles.infoCard}>
-                <span className={styles.accountTitle}>Manage labels</span>
-                <span className={styles.accountMeta}>
-                  Label creation and organization are still handled from the message workflow.
-                </span>
-              </article>
             </div>
           </section>
         </div>

@@ -16,6 +16,20 @@ export interface ComposerAttachmentItem {
   name: string;
   previewUrl?: string;
   size: number;
+  file?: File;
+}
+
+export function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = reader.result as string;
+      const base64 = result.includes(",") ? result.split(",")[1] : result;
+      resolve(base64);
+    };
+    reader.onerror = (error) => reject(error);
+    reader.readAsDataURL(file);
+  });
 }
 
 export const COMPOSER_ATTACHMENT_WARNING_SIZE = 10 * 1024 * 1024;
@@ -149,7 +163,8 @@ export function toComposerAttachmentItem(file: File): ComposerAttachmentItem {
     mimeType,
     name: file.name,
     previewUrl: kind === "image" ? URL.createObjectURL(file) : undefined,
-    size: file.size
+    size: file.size,
+    file
   };
 }
 

@@ -9,6 +9,7 @@ import {
   type SyncJobInput
 } from "@mail-agent/shared";
 
+import { MailAnalyzerService } from "../mail/mail-analyzer.service";
 import { MailNormalizerService } from "../mail/mail-normalizer.service";
 import { SyncService } from "./sync.service";
 
@@ -53,6 +54,21 @@ class FakeAccountsRepository {
     account.updatedAt = new Date();
     return account;
   }
+
+  async updateSyncStatusForUser(
+    _user: { email: string },
+    accountId: string,
+    syncStatus: SyncStatus
+  ): Promise<FakeAccountRecord | null> {
+    const account = this.accounts.get(accountId) ?? null;
+    if (!account) {
+      return null;
+    }
+
+    account.syncStatus = syncStatus;
+    account.updatedAt = new Date();
+    return account;
+  }
 }
 
 class FakeMailRepository {
@@ -68,6 +84,8 @@ class FakeMailRepository {
       );
     }
   }
+
+  async persistAnalysisForMessage(_messageId: string, _analysis: unknown): Promise<void> {}
 }
 
 class FakeProviderRegistryService {
@@ -222,7 +240,8 @@ async function runReplayScenario(provider: MailProviderKind) {
     fakeEncryptionService as never,
     fakeMailMockSourceService as never,
     new MailNormalizerService(),
-    mailRepository as never
+    mailRepository as never,
+    new MailAnalyzerService()
   );
 
   const input: SyncJobInput = {

@@ -6,8 +6,26 @@ import {
   IsOptional,
   IsString,
   MaxLength,
-  MinLength
+  MinLength,
+  ValidateNested
 } from "class-validator";
+import { Type } from "class-transformer";
+
+export class OutboundAttachmentDto {
+  @IsString()
+  @MinLength(1)
+  @MaxLength(255)
+  filename!: string;
+
+  @IsString()
+  @MinLength(1)
+  @MaxLength(120)
+  mimeType!: string;
+
+  @IsString()
+  @MinLength(1)
+  contentBase64!: string;
+}
 
 class SendMailBaseDto {
   @IsArray()
@@ -41,6 +59,12 @@ class SendMailBaseDto {
   @IsString()
   @MaxLength(100000)
   bodyHtml?: string;
+
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => OutboundAttachmentDto)
+  attachments?: OutboundAttachmentDto[];
 }
 
 export class ComposeMessageDto extends SendMailBaseDto {

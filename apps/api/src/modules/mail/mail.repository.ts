@@ -108,6 +108,8 @@ export class MailRepository {
     accountId: string;
     provider: MailProviderKind;
     providerMessageId: string;
+    providerThreadId?: string | null;
+    labels: string[];
   } | null> {
     const message = await this.prisma.message.findFirst({
       where: {
@@ -119,7 +121,9 @@ export class MailRepository {
         userId: true,
         accountId: true,
         provider: true,
-        providerMessageId: true
+        providerMessageId: true,
+        providerThreadId: true,
+        labels: true
       }
     });
 
@@ -132,7 +136,9 @@ export class MailRepository {
       userId: message.userId,
       accountId: message.accountId,
       provider: message.provider as MailProviderKind,
-      providerMessageId: message.providerMessageId
+      providerMessageId: message.providerMessageId,
+      providerThreadId: message.providerThreadId,
+      labels: message.labels
     };
   }
 
@@ -141,12 +147,46 @@ export class MailRepository {
       where: this.buildUserWhere(user),
       orderBy: {
         receivedAt: "desc"
+      },
+      include: {
+        analyses: {
+          orderBy: {
+            createdAt: "desc"
+          },
+          take: 1
+        }
       }
     });
 
-    return messages.map((message) => ({
-      ...this.toMessageSummary(message)
-    }));
+    return messages.map((message) => {
+      const summary = this.toMessageSummary(message);
+      const latestAnalysis = message.analyses?.[0];
+      if (latestAnalysis) {
+        summary.analysis = {
+          id: latestAnalysis.id,
+          messageId: latestAnalysis.messageId,
+          source: latestAnalysis.source as "heuristic" | "qwen",
+          status: latestAnalysis.status as "completed" | "invalid" | "failed",
+          model: latestAnalysis.model || undefined,
+          promptVersion: latestAnalysis.promptVersion || undefined,
+          qualityIssues: latestAnalysis.qualityIssues || [],
+          summary: latestAnalysis.summary,
+          category: latestAnalysis.category,
+          priority: latestAnalysis.priority as "low" | "medium" | "high",
+          priorityReason: latestAnalysis.priorityReason || undefined,
+          intent: latestAnalysis.intent || undefined,
+          keyPoints: latestAnalysis.keyPoints || [],
+          requiresReply: latestAnalysis.requiresReply,
+          requiresAction: latestAnalysis.requiresAction,
+          dueDate: latestAnalysis.dueDate?.toISOString(),
+          suggestedReply: latestAnalysis.suggestedReply || undefined,
+          suggestedActions: latestAnalysis.suggestedActions,
+          confidence: latestAnalysis.confidence,
+          createdAt: latestAnalysis.createdAt.toISOString()
+        };
+      }
+      return summary;
+    });
   }
 
   async findMessageDetailForUser(
@@ -163,6 +203,12 @@ export class MailRepository {
           orderBy: {
             createdAt: "asc"
           }
+        },
+        analyses: {
+          orderBy: {
+            createdAt: "desc"
+          },
+          take: 1
         }
       }
     });
@@ -171,14 +217,86 @@ export class MailRepository {
       return null;
     }
 
+    const latestAnalysis = message.analyses?.[0];
+
     return {
       ...this.toMessageSummary(message),
       to: message.toRecipients,
       cc: message.ccRecipients,
       bodyText: message.bodyText ?? "",
       bodyHtml: message.bodyHtml ?? "",
-      attachments: message.attachments.map((attachment) => this.toAttachment(attachment))
+      attachments: message.attachments.map((attachment) => this.toAttachment(attachment)),
+      analysis: latestAnalysis
+        ? {
+            id: latestAnalysis.id,
+            messageId: latestAnalysis.messageId,
+            source: latestAnalysis.source as "heuristic" | "qwen",
+            status: latestAnalysis.status as "completed" | "invalid" | "failed",
+            model: latestAnalysis.model || undefined,
+            promptVersion: latestAnalysis.promptVersion || undefined,
+            qualityIssues: latestAnalysis.qualityIssues || [],
+            summary: latestAnalysis.summary,
+            category: latestAnalysis.category,
+            priority: latestAnalysis.priority as "low" | "medium" | "high",
+            priorityReason: latestAnalysis.priorityReason || undefined,
+            intent: latestAnalysis.intent || undefined,
+            keyPoints: latestAnalysis.keyPoints || [],
+            requiresReply: latestAnalysis.requiresReply,
+            requiresAction: latestAnalysis.requiresAction,
+            dueDate: latestAnalysis.dueDate?.toISOString(),
+            suggestedReply: latestAnalysis.suggestedReply || undefined,
+            suggestedActions: latestAnalysis.suggestedActions,
+            confidence: latestAnalysis.confidence,
+            createdAt: latestAnalysis.createdAt.toISOString()
+          }
+        : undefined
     };
+  }
+
+  async persistAnalysisForMessage(
+    messageId: string,
+    analysis: {
+      source?: "heuristic" | "qwen";
+      status?: "completed" | "invalid" | "failed";
+      model?: string;
+      promptVersion?: string;
+      qualityIssues?: string[];
+      summary: string;
+      category: string;
+      priority: string;
+      priorityReason?: string;
+      intent?: string;
+      keyPoints?: string[];
+      requiresReply: boolean;
+      requiresAction: boolean;
+      dueDate?: string;
+      suggestedReply?: string;
+      suggestedActions?: string[];
+      confidence: number;
+    }
+  ) {
+    return this.prisma.agentAnalysis.create({
+      data: {
+        messageId,
+        source: analysis.source || "heuristic",
+        status: analysis.status || "completed",
+        model: analysis.model,
+        promptVersion: analysis.promptVersion,
+        qualityIssues: analysis.qualityIssues || [],
+        summary: analysis.summary,
+        category: analysis.category,
+        priority: analysis.priority,
+        priorityReason: analysis.priorityReason,
+        intent: analysis.intent,
+        keyPoints: analysis.keyPoints || [],
+        requiresReply: analysis.requiresReply,
+        requiresAction: analysis.requiresAction,
+        dueDate: analysis.dueDate ? new Date(analysis.dueDate) : undefined,
+        suggestedReply: analysis.suggestedReply,
+        suggestedActions: analysis.suggestedActions || [],
+        confidence: analysis.confidence
+      }
+    });
   }
 
   async persistNormalizedRecords(records: NormalizedMailRecord[]): Promise<void> {
@@ -323,13 +441,21 @@ export class MailRepository {
       return null;
     }
 
+    const currentLabels = message.labels ?? [];
+    const nextLabels = input.isRead
+      ? currentLabels.filter((label) => label !== "UNREAD")
+      : currentLabels.includes("UNREAD")
+        ? currentLabels
+        : ["UNREAD", ...currentLabels];
+
     await this.prisma.$transaction(async (tx) => {
       await tx.message.update({
         where: {
           id: messageId
         },
         data: {
-          isRead: input.isRead
+          isRead: input.isRead,
+          labels: nextLabels
         }
       });
 
@@ -365,13 +491,21 @@ export class MailRepository {
       return null;
     }
 
+    const currentLabels = message.labels ?? [];
+    const nextLabels = input.isArchived
+      ? currentLabels.filter((label) => label !== "INBOX")
+      : currentLabels.includes("INBOX")
+        ? currentLabels
+        : ["INBOX", ...currentLabels];
+
     await this.prisma.$transaction(async (tx) => {
       await tx.message.update({
         where: {
           id: messageId
         },
         data: {
-          isArchived: input.isArchived
+          isArchived: input.isArchived,
+          labels: nextLabels
         }
       });
 
@@ -552,6 +686,27 @@ export class MailRepository {
       hasAttachments: message.hasAttachments,
       labels: message.labels
     };
+  }
+
+  async findAttachmentRecordForUser(
+    user: AuthenticatedUserContext,
+    messageId: string,
+    attachmentId: string
+  ) {
+    return this.prisma.attachment.findFirst({
+      where: {
+        id: attachmentId,
+        messageId,
+        message: this.buildUserWhere(user)
+      },
+      include: {
+        message: {
+          include: {
+            account: true
+          }
+        }
+      }
+    });
   }
 
   private toAttachment(attachment: {

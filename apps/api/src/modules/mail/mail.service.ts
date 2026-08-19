@@ -64,6 +64,46 @@ export class MailService {
     };
   }
 
+  async downloadAttachment(
+    user: AuthenticatedUserContext,
+    messageId: string,
+    attachmentId: string
+  ): Promise<{
+    filename: string;
+    mimeType: string;
+    data: Buffer;
+    size: number;
+  }> {
+    const attachment = await this.mailRepository.findAttachmentRecordForUser(
+      user,
+      messageId,
+      attachmentId
+    );
+
+    if (!attachment) {
+      throw new NotFoundException(`Attachment ${attachmentId} was not found.`);
+    }
+
+    const resolvedProvider = this.resolveProviderWithCredentials(attachment.message.account);
+
+    if (resolvedProvider.providerKind === MailProviderKind.GMAIL) {
+      const result = await resolvedProvider.provider.getAttachment(
+        resolvedProvider,
+        attachment.message.providerMessageId,
+        attachment.providerAttachmentId
+      );
+
+      return {
+        filename: attachment.filename,
+        mimeType: attachment.mimeType,
+        data: result.data,
+        size: result.size || result.data.length
+      };
+    }
+
+    throw new BadRequestException("Attachment download is currently supported for Gmail accounts.");
+  }
+
   async composeMessage(
     user: AuthenticatedUserContext,
     input: {
@@ -116,7 +156,14 @@ export class MailService {
       throw new NotFoundException(`Account ${message.accountId} was not found.`);
     }
 
-    return this.sendViaAccount(account, input, "reply");
+    return this.sendViaAccount(
+      account,
+      {
+        ...input,
+        threadId: message.providerThreadId || message.providerMessageId
+      },
+      "reply"
+    );
   }
 
   async forwardMessage(
@@ -504,7 +551,9 @@ export class MailService {
       {
         providerKind: MailProviderKind.SMTP,
         account: sharedAccount,
-        config: resolvedProvider.config
+        config: resolvedProvider.config,
+        credentials:
+          "credentials" in resolvedProvider ? resolvedProvider.credentials : undefined
       },
       payload
     );
@@ -513,8 +562,8 @@ export class MailService {
       accountId: sharedAccount.id,
       provider: sharedAccount.provider,
       mode,
-      status: "accepted_placeholder",
-      detail: "SMTP transport is still a placeholder in this stage, but the compose flow is wired."
+      status: "sent",
+      detail: "SMTP send request completed successfully."
     };
   }
 }

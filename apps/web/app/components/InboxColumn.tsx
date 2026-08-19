@@ -86,27 +86,46 @@ function getPriorityTone(message: MessageSummary) {
   return null;
 }
 
-function getCategoryLabel(message: MessageSummary) {
+function getCategoryInfo(message: MessageSummary): { label: string; isAi: boolean } | null {
+  if (message.analysis?.category) {
+    return {
+      label: `✨ ${message.analysis.category}`,
+      isAi: true
+    };
+  }
+
+  const categoryLabel = message.labels.find((label) => label.startsWith("CATEGORY_"));
+  if (categoryLabel) {
+    const raw = categoryLabel.replace("CATEGORY_", "").toLowerCase().replace(/_/g, " ");
+    const nameMap: Record<string, string> = {
+      personal: "Personal",
+      social: "Social",
+      promotions: "Promotions",
+      updates: "Updates",
+      forums: "Forums"
+    };
+    return {
+      label: nameMap[raw] || raw,
+      isAi: false
+    };
+  }
+
   const visibleLabel = message.labels.find(
     (label) =>
       label !== "INBOX" &&
       label !== "UNREAD" &&
       label !== "STARRED" &&
-      label !== "TRASH" &&
-      !label.startsWith("CATEGORY_")
+      label !== "TRASH"
   );
 
   if (visibleLabel) {
-    return visibleLabel.toLowerCase().replace(/_/g, " ");
+    return {
+      label: visibleLabel.toLowerCase().replace(/_/g, " "),
+      isAi: false
+    };
   }
 
-  const categoryLabel = message.labels.find((label) => label.startsWith("CATEGORY_"));
-
-  if (!categoryLabel) {
-    return null;
-  }
-
-  return categoryLabel.replace("CATEGORY_", "").toLowerCase().replace(/_/g, " ");
+  return null;
 }
 
 export function InboxColumn({
@@ -281,13 +300,15 @@ export function InboxColumn({
           {visibleMessages.map((message) => {
             const isSelected = selectedMessageId === message.id;
             const priority = getPriorityTone(message);
-            const categoryLabel = getCategoryLabel(message);
+            const categoryInfo = getCategoryInfo(message);
+            const isAiHigh = message.analysis?.priority === "high";
+
             return (
               <button
                 key={message.id}
                 aria-selected={isSelected}
                 className={`${styles.rowButton}${message.isRead ? "" : ` ${styles.rowUnread}`}${
-                  priority?.tone === "high" ? ` ${styles.rowPriority}` : ""
+                  priority?.tone === "high" || isAiHigh ? ` ${styles.rowPriority}` : ""
                 }${isSelected ? ` ${styles.rowSelected}` : ""}`}
                 type="button"
                 role="listitem"
@@ -308,12 +329,31 @@ export function InboxColumn({
                   </div>
                   <div className={styles.rowMeta}>
                     <span className={styles.accountBadge}>{getAccountBadge(message)}</span>
-                    {priority && (
-                      <span className={`${styles.statusBadge} ${priority.tone === "high" ? styles.statusHigh : styles.statusMedium}`}>
+                    {isAiHigh ? (
+                      <span className={`${styles.statusBadge} ${styles.statusHigh}`}>
+                        🔥 중요
+                      </span>
+                    ) : priority ? (
+                      <span
+                        className={`${styles.statusBadge} ${
+                          priority.tone === "high" ? styles.statusHigh : styles.statusMedium
+                        }`}
+                      >
                         {priority.label}
                       </span>
+                    ) : null}
+                    {categoryInfo && (
+                      <span
+                        className={categoryInfo.isAi ? styles.aiBadge : styles.categoryBadge}
+                      >
+                        {categoryInfo.label}
+                      </span>
                     )}
-                    {categoryLabel && <span className={styles.categoryBadge}>{categoryLabel}</span>}
+                    {message.analysis?.requiresReply && (
+                      <span className={`${styles.statusBadge} ${styles.aiReplyBadge}`}>
+                        💬 답장 필요
+                      </span>
+                    )}
                   </div>
                   <div className={`${styles.subject}${message.isRead ? "" : ` ${styles.subjectUnread}`}`}>
                     {message.subject}

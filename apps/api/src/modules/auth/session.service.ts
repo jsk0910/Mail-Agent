@@ -28,10 +28,27 @@ export class SessionService {
     };
     user: AuthenticatedUserContext;
   }> {
-    const user = await this.ensureUser({
-      email: input.email || currentUser.email,
-      name: input.name || currentUser.name
-    });
+    if (!this.appConfigService.allowDevelopmentIdentity && currentUser.source !== "session") {
+      throw new UnauthorizedException("Session creation requires a verified identity.");
+    }
+    return this.createSessionForIdentity(
+      {
+        email: currentUser.email,
+        name: currentUser.name
+      },
+      input
+    );
+  }
+
+  async createSessionForIdentity(
+    identity: { email: string; name: string },
+    input: Pick<CreateSessionDto, "clientType" | "deviceLabel" | "ttlDays">
+  ): Promise<{
+    sessionToken: string;
+    session: { id: string; clientType: string; deviceLabel?: string; expiresAt: string };
+    user: AuthenticatedUserContext;
+  }> {
+    const user = await this.ensureUser(identity);
 
     const sessionToken = this.generateSessionToken();
     const expiresAt = new Date();

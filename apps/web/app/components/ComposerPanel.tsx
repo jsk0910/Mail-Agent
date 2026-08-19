@@ -59,18 +59,18 @@ interface ComposerPanelProps {
 
 function getModeCopy(mode: ComposerPanelProps["mode"]) {
   if (mode === "compose") {
-    return { eyebrow: "New message", title: "Compose message" };
+    return { eyebrow: "New message", title: "새 메일 작성" };
   }
 
   if (mode === "reply") {
-    return { eyebrow: "Reply", title: "Reply to message" };
+    return { eyebrow: "Reply", title: "답장 작성" };
   }
 
   if (mode === "replyAll") {
-    return { eyebrow: "Reply all", title: "Reply to everyone" };
+    return { eyebrow: "Reply all", title: "전체 답장 작성" };
   }
 
-  return { eyebrow: "Forward", title: "Forward message" };
+  return { eyebrow: "Forward", title: "메일 전달" };
 }
 
 function escapeHtml(value: string) {
@@ -113,25 +113,17 @@ export function ComposerPanel({
 }: ComposerPanelProps) {
   const copy = getModeCopy(mode);
   const requiresAccount = mode === "compose";
+  const [showCc, setShowCc] = useState(Boolean(draft.cc.trim()));
+  const [isDragActive, setIsDragActive] = useState(false);
+  const editorRef = useRef<HTMLDivElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const lastInternalHtmlRef = useRef<string>("");
+
   const recipientCount = draft.to
     .split(",")
     .map((value) => value.trim())
     .filter(Boolean).length;
   const bodyLength = draft.bodyText.trim().length;
-  const showThreadContext = mode !== "compose" && Boolean(context?.subject || context?.from);
-  const isReplyMode = mode !== "compose";
-  const editorRef = useRef<HTMLDivElement | null>(null);
-  const [isDragActive, setIsDragActive] = useState(false);
-  const attachmentCount = attachments.length;
-  const largeAttachmentCount = attachments.filter(
-    (attachment) => attachment.size >= COMPOSER_ATTACHMENT_WARNING_SIZE
-  ).length;
-  const blockedSizeCount = attachments.filter(
-    (attachment) => attachment.size >= COMPOSER_ATTACHMENT_HARD_SIZE
-  ).length;
-  const riskyAttachmentCount = attachments.filter(
-    (attachment) => getComposerAttachmentWarnings(attachment).length > 0
-  ).length;
 
   function syncEditorState() {
     const editor = editorRef.current;
@@ -141,8 +133,9 @@ export function ComposerPanel({
 
     const html = editor.innerHTML === "<br>" ? "" : editor.innerHTML;
     const text = editor.innerText.replace(/\u00a0/g, " ").replace(/\n{3,}/g, "\n\n");
+    lastInternalHtmlRef.current = html;
     onChange("bodyHtml", html);
-    onChange("bodyText", text.trimEnd());
+    onChange("bodyText", text);
   }
 
   function focusEditor() {
@@ -150,7 +143,6 @@ export function ComposerPanel({
     if (!editor) {
       return;
     }
-
     editor.focus();
   }
 
@@ -186,9 +178,10 @@ export function ComposerPanel({
       return;
     }
 
-    const nextHtml = draft.bodyHtml.trim() || plainTextToEditorHtml(draft.bodyText);
-    if (editor.innerHTML !== nextHtml) {
-      editor.innerHTML = nextHtml;
+    const incomingHtml = draft.bodyHtml || plainTextToEditorHtml(draft.bodyText);
+    if (incomingHtml !== lastInternalHtmlRef.current && editor.innerHTML !== incomingHtml) {
+      editor.innerHTML = incomingHtml;
+      lastInternalHtmlRef.current = incomingHtml;
     }
   }, [draft.bodyHtml, draft.bodyText]);
 
@@ -217,114 +210,179 @@ export function ComposerPanel({
     }
   }
 
-  function handleDrop(event: React.DragEvent<HTMLLabelElement>) {
+  function handleDrop(event: React.DragEvent<HTMLDivElement>) {
     event.preventDefault();
     setIsDragActive(false);
     onAttachFiles(event.dataTransfer.files);
   }
 
+  const isFormValid =
+    !sending &&
+    draft.subject.trim().length > 0 &&
+    draft.bodyText.trim().length > 0 &&
+    draft.to.trim().length > 0 &&
+    (!requiresAccount || draft.accountId.trim().length > 0);
+
   return (
-    <section
-      className={`${styles.composer} ${mode === "compose" ? styles.dock : styles.inline}${
-        isReplyMode ? ` ${styles.replyOverlayPanel}` : ""
-      }`}
-    >
+    <section className={styles.composerCard}>
+      {/* Header */}
       <header className={styles.header}>
-        <div className={styles.headerCopy}>
-          <p className={styles.eyebrow}>{copy.eyebrow}</p>
-          <h2 className={styles.title}>{copy.title}</h2>
-          <p className={styles.subcopy}>
-            {requiresAccount
-              ? "Choose an account and draft a new outbound message."
-              : "Review the thread context, then send a reply when you are ready."}
-          </p>
+        <div className={styles.headerTitleArea}>
+          <span className={styles.eyebrowBadge}>{copy.eyebrow}</span>
+          <h3 className={styles.title}>{copy.title}</h3>
         </div>
-        <Button variant="ghost" onClick={onClose}>
-          Close
+        <Button variant="ghost" compact onClick={onClose}>
+          ✕ Close
         </Button>
       </header>
 
       <form id="composer-form" className={styles.form} onSubmit={onSubmit}>
-        {showThreadContext && (
-          <section className={styles.contextCard} aria-label="Reply context">
-            <div className={styles.contextHeader}>
-              <span className={styles.contextTitle}>Thread context</span>
-              {context?.receivedAt && <span className={styles.contextMeta}>{context.receivedAt}</span>}
+        {/* Recipient & Metadata Section */}
+        <div className={styles.fieldsContainer}>
+          {requiresAccount && (
+            <div className={styles.fieldRow}>
+              <span className={styles.fieldLabel}>보내는 계정</span>
+              <select
+                autoFocus={requiresAccount}
+                className={styles.selectInput}
+                value={draft.accountId}
+                onChange={(event) => onChange("accountId", event.target.value)}
+                disabled={sending}
+              >
+                <option value="">계정 선택</option>
+                {accounts.map((account) => (
+                  <option key={account.id} value={account.id}>
+                    {account.displayName}
+                  </option>
+                ))}
+              </select>
             </div>
-            {context?.subject && <p className={styles.contextSubject}>{context.subject}</p>}
-            {context?.from && <p className={styles.contextMeta}>From {context.from}</p>}
-          </section>
-        )}
+          )}
 
-        {requiresAccount && (
-          <label className={styles.field}>
-            <span className={styles.label}>Account</span>
-            <select
-              autoFocus={requiresAccount}
-              className={styles.select}
-              value={draft.accountId}
-              onChange={(event) => onChange("accountId", event.target.value)}
-              disabled={!requiresAccount || sending}
-            >
-              <option value="">Select account</option>
-              {accounts.map((account) => (
-                <option key={account.id} value={account.id}>
-                  {account.displayName}
-                </option>
-              ))}
-            </select>
-          </label>
-        )}
+          <div className={styles.fieldRow}>
+            <span className={styles.fieldLabel}>받는 사람</span>
+            <div className={styles.inputWithToggle}>
+              <input
+                autoFocus={!requiresAccount}
+                className={styles.textInput}
+                type="text"
+                value={draft.to}
+                onChange={(event) => onChange("to", event.target.value)}
+                placeholder="이메일 주소 입력 (쉼표로 구분)"
+                disabled={sending}
+              />
+              {!showCc && (
+                <button
+                  type="button"
+                  className={styles.toggleCcButton}
+                  onClick={() => setShowCc(true)}
+                >
+                  Cc 참조 추가
+                </button>
+              )}
+            </div>
+          </div>
 
-        <label className={styles.field}>
-          <span className={styles.label}>To</span>
-          <input
-            autoFocus={!requiresAccount}
-            className={styles.input}
-            type="text"
-            value={draft.to}
-            onChange={(event) => onChange("to", event.target.value)}
-            placeholder="person@example.com, team@example.com"
-            disabled={sending}
-          />
-        </label>
+          {showCc && (
+            <div className={styles.fieldRow}>
+              <span className={styles.fieldLabel}>참조 (Cc)</span>
+              <input
+                className={styles.textInput}
+                type="text"
+                value={draft.cc}
+                onChange={(event) => onChange("cc", event.target.value)}
+                placeholder="참조 이메일 주소 (선택)"
+                disabled={sending}
+              />
+            </div>
+          )}
 
-        <div className={styles.row}>
-          <label className={styles.field}>
-            <span className={styles.label}>Cc</span>
+          <div className={styles.fieldRow}>
+            <span className={styles.fieldLabel}>제목</span>
             <input
-              className={styles.input}
-              type="text"
-              value={draft.cc}
-              onChange={(event) => onChange("cc", event.target.value)}
-              placeholder="Optional"
-              disabled={sending}
-            />
-          </label>
-
-          <label className={styles.field}>
-            <span className={styles.label}>Subject</span>
-            <input
-              className={styles.input}
+              className={styles.textInput}
               type="text"
               value={draft.subject}
               onChange={(event) => onChange("subject", event.target.value)}
-              placeholder="Subject"
+              placeholder="메일 제목"
               disabled={sending}
             />
-          </label>
+          </div>
         </div>
 
-        <section className={styles.field} aria-label="Composer formatting">
-          <div className={styles.labelRow}>
-            <span className={styles.label}>Formatting</span>
-            <span className={styles.metaPill}>Default font: Pretendard</span>
-          </div>
-          <div className={styles.toolbar}>
-            <label className={styles.fontSelectWrap}>
-              <span className={styles.toolbarLabel}>Font</span>
+        {/* Unified Rich Text Editor Box */}
+        <div
+          className={`${styles.editorBox}${isDragActive ? ` ${styles.editorBoxDragOver}` : ""}`}
+          onDragEnter={() => setIsDragActive(true)}
+          onDragLeave={() => setIsDragActive(false)}
+          onDragOver={(event) => event.preventDefault()}
+          onDrop={handleDrop}
+        >
+          {/* Integrated Editor Toolbar */}
+          <div className={styles.editorToolbar}>
+            <div className={styles.toolbarButtonGroup}>
+              <button
+                type="button"
+                className={styles.toolBtn}
+                title="Bold (Ctrl+B)"
+                onClick={() => applyExecCommand("bold")}
+              >
+                <strong>B</strong>
+              </button>
+              <button
+                type="button"
+                className={styles.toolBtn}
+                title="Italic (Ctrl+I)"
+                onClick={() => applyExecCommand("italic")}
+              >
+                <em>I</em>
+              </button>
+              <span className={styles.toolbarDivider} />
+              <button
+                type="button"
+                className={styles.toolBtn}
+                title="Bullet List"
+                onClick={() => applyExecCommand("insertUnorderedList")}
+              >
+                • List
+              </button>
+              <button
+                type="button"
+                className={styles.toolBtn}
+                title="Numbered List"
+                onClick={() => applyExecCommand("insertOrderedList")}
+              >
+                1. List
+              </button>
+              <button
+                type="button"
+                className={styles.toolBtn}
+                title="Quote"
+                onClick={() => applyExecCommand("formatBlock", "blockquote")}
+              >
+                “ Quote
+              </button>
+              <button
+                type="button"
+                className={styles.toolBtn}
+                title="Link (Ctrl+K)"
+                onClick={insertLink}
+              >
+                🔗 Link
+              </button>
+              <button
+                type="button"
+                className={styles.toolBtn}
+                title="Checklist"
+                onClick={insertChecklist}
+              >
+                ☑ Checklist
+              </button>
+            </div>
+
+            <div className={styles.toolbarRightGroup}>
               <select
-                className={styles.toolbarSelect}
+                className={styles.fontSelect}
                 value={appearance.fontFamily}
                 onChange={(event) =>
                   onAppearanceChange({
@@ -336,226 +394,112 @@ export function ComposerPanel({
                 <option value="geist">Geist</option>
                 <option value="mono">IBM Plex Mono</option>
               </select>
-            </label>
-            <div className={styles.toolbarActions}>
-              <Button compact type="button" variant="secondary" onClick={() => applyExecCommand("bold")}>
-                Bold
-              </Button>
-              <Button compact type="button" variant="secondary" onClick={() => applyExecCommand("italic")}>
-                Italic
-              </Button>
-              <Button compact type="button" variant="secondary" onClick={() => applyExecCommand("insertUnorderedList")}>
-                Bullet
-              </Button>
-              <Button compact type="button" variant="secondary" onClick={() => applyExecCommand("insertOrderedList")}>
-                Numbered
-              </Button>
-              <Button compact type="button" variant="secondary" onClick={() => applyExecCommand("formatBlock", "blockquote")}>
-                Quote
-              </Button>
-              <Button compact type="button" variant="secondary" onClick={() => applyExecCommand("formatBlock", "h2")}>
-                Heading
-              </Button>
-              <Button compact type="button" variant="secondary" onClick={insertChecklist}>
-                Checklist
-              </Button>
-              <Button compact type="button" variant="secondary" onClick={insertLink}>
-                Link
-              </Button>
             </div>
           </div>
-          <p className={styles.toolbarHint}>
-            Use <Kbd>Tab</Kbd> to indent and <Kbd>Shift+Tab</Kbd> to outdent inside the body editor.
-          </p>
-        </section>
 
-        <div className={styles.field}>
-          <span className={styles.labelRow}>
-            <span className={styles.label}>Body</span>
-            <span className={styles.metaPill}>
-              {recipientCount} recipient{recipientCount === 1 ? "" : "s"} · {bodyLength} chars
-            </span>
-          </span>
+          {/* Editor Editable Body */}
           <div
             ref={editorRef}
-            className={`${styles.editor} ${styles[appearance.fontFamily]}`}
+            className={`${styles.editorArea} ${styles[appearance.fontFamily]}`}
             contentEditable={!sending}
             suppressContentEditableWarning
-            data-placeholder="Write your message"
+            data-placeholder="메일 내용을 작성하세요..."
             onInput={syncEditorState}
             onKeyDown={handleEditorKeyDown}
             role="textbox"
             aria-multiline="true"
           />
-        </div>
 
-        <section className={styles.field} aria-label="Attachments">
-          <div className={styles.labelRow}>
-            <span className={styles.label}>Attachments</span>
-            <div className={styles.attachmentMetaGroup}>
-              {blockedSizeCount > 0 && (
-                <Chip tone="danger">
-                  {blockedSizeCount} oversize file{blockedSizeCount === 1 ? "" : "s"}
-                </Chip>
-              )}
-              {largeAttachmentCount > 0 && (
-                <Chip tone="warning">
-                  {largeAttachmentCount} large file{largeAttachmentCount === 1 ? "" : "s"}
-                </Chip>
-              )}
-              <span className={styles.metaPill}>
-                {attachmentCount} file{attachmentCount === 1 ? "" : "s"}
-              </span>
-            </div>
-          </div>
-          <label
-            className={`${styles.dropzone}${isDragActive ? ` ${styles.dropzoneActive}` : ""}`}
-            onDragEnter={() => setIsDragActive(true)}
-            onDragLeave={() => setIsDragActive(false)}
-            onDragOver={(event) => {
-              event.preventDefault();
-              if (!isDragActive) {
-                setIsDragActive(true);
-              }
-            }}
-            onDrop={handleDrop}
-          >
-            <input
-              className={styles.fileInput}
-              type="file"
-              multiple
-              onChange={(event) => {
-                onAttachFiles(event.target.files);
-                event.currentTarget.value = "";
-              }}
-              disabled={sending}
-            />
-            <div className={styles.dropzoneBody}>
-              <span className={styles.dropzoneIcon}>
-                <PaperclipIcon width={18} height={18} />
-              </span>
-              <div className={styles.dropzoneCopy}>
-                <strong>Drop files here or click to browse</strong>
-                <span>Images, video, zip, code files, and documents are supported in the UI.</span>
+          {/* Attached Files List (Inside Editor Box) */}
+          {attachments.length > 0 && (
+            <div className={styles.attachmentChipsContainer}>
+              <div className={styles.attachmentChipsHeader}>
+                <span className={styles.attachmentChipsTitle}>첨부파일 ({attachments.length})</span>
               </div>
-            </div>
-          </label>
-          {attachments.length > 0 ? (
-            <>
-              <div className={styles.attachmentStatus} aria-live="polite">
-                {blockedSizeCount > 0
-                  ? "Some files exceed the recommended 25 MB send size and may fail in a real transport flow."
-                  : riskyAttachmentCount > 0
-                    ? "Some attachments need review because of size or file type."
-                    : "All attached files are queued and ready in this MVP draft."}
-              </div>
-              <div className={styles.attachmentList}>
-              {attachments.map((attachment) => {
-                const summary = getAttachmentSummary(attachment);
-                const warnings = getComposerAttachmentWarnings(attachment);
-                const isLarge = attachment.size >= COMPOSER_ATTACHMENT_WARNING_SIZE;
-                const isOversize = attachment.size >= COMPOSER_ATTACHMENT_HARD_SIZE;
+              <div className={styles.attachmentChipsList}>
+                {attachments.map((attachment) => {
+                  const summary = getAttachmentSummary(attachment);
+                  const warnings = getComposerAttachmentWarnings(attachment);
+                  const isLarge = attachment.size >= COMPOSER_ATTACHMENT_WARNING_SIZE;
+                  const isOversize = attachment.size >= COMPOSER_ATTACHMENT_HARD_SIZE;
 
-                return (
-                  <article key={attachment.id} className={styles.attachmentCard}>
-                    {summary.kind === "image" && attachment.previewUrl ? (
-                      <div className={styles.attachmentPreview}>
-                        <img
-                          src={attachment.previewUrl}
-                          alt={`${summary.filename} preview`}
-                          className={styles.attachmentPreviewImage}
-                        />
-                      </div>
-                    ) : (
-                      <div className={styles.attachmentPreviewFallback}>
-                        <span>{summary.kindLabel}</span>
-                      </div>
-                    )}
-                    <div className={styles.attachmentBody}>
-                      <div className={styles.attachmentHeader}>
-                        <p className={styles.attachmentName}>{summary.filename}</p>
-                        <div className={styles.attachmentChips}>
-                          <Chip tone={summary.tone}>{summary.kindLabel}</Chip>
-                          {isOversize && <Chip tone="danger">Oversize</Chip>}
-                          {isLarge && <Chip tone="warning">Large</Chip>}
-                        </div>
-                      </div>
-                      <p className={styles.attachmentMeta}>
-                        {summary.mimeType} · {formatFileSize(attachment.size)}
-                      </p>
-                      <p className={styles.attachmentState}>
-                        {isOversize
-                          ? "Kept in draft with an oversize warning."
-                          : isLarge
-                            ? "Kept in draft with a size warning."
-                          : summary.kind === "image"
-                            ? "Thumbnail preview available in the composer."
-                            : "Attached and ready in the current draft."}
-                      </p>
-                      {warnings.length > 0 && (
-                        <div className={styles.attachmentWarnings}>
-                          {warnings.map((warning) => (
-                            <Chip key={warning} tone={warning.includes("risky") ? "danger" : "warning"}>
-                              {warning}
-                            </Chip>
-                          ))}
-                        </div>
-                      )}
+                  return (
+                    <div key={attachment.id} className={styles.attachedChip}>
+                      <span className={styles.attachedChipName}>{summary.filename}</span>
+                      <span className={styles.attachedChipSize}>({formatFileSize(attachment.size)})</span>
+                      {isOversize && <Chip tone="danger">용량초과</Chip>}
+                      {isLarge && !isOversize && <Chip tone="warning">대용량</Chip>}
+                      <button
+                        type="button"
+                        className={styles.attachedChipRemove}
+                        onClick={() => onRemoveAttachment(attachment.id)}
+                        title="Remove file"
+                      >
+                        ✕
+                      </button>
                     </div>
-                    <Button
-                      variant="ghost"
-                      compact
-                      type="button"
-                      onClick={() => onRemoveAttachment(attachment.id)}
-                    >
-                      Remove
-                    </Button>
-                  </article>
-                );
-              })}
+                  );
+                })}
               </div>
-            </>
-          ) : (
-            <div className={styles.attachmentEmpty}>
-              No files attached yet. Drag files in or click the drop area to add them.
             </div>
           )}
-        </section>
+        </div>
 
+        {/* Hidden File Input */}
+        <input
+          ref={fileInputRef}
+          type="file"
+          multiple
+          className={styles.hiddenFileInput}
+          onChange={(event) => {
+            onAttachFiles(event.target.files);
+            event.currentTarget.value = "";
+          }}
+          disabled={sending}
+        />
+
+        {/* Error / Success feedback */}
         {(error || success) && (
-          <p className={styles.hint} aria-live="polite">
+          <div className={error ? styles.errorNotice : styles.successNotice} aria-live="polite">
             {error || success}
-          </p>
+          </div>
         )}
 
-        <div className={styles.footer}>
-          <span className={styles.hint}>
-            <Kbd>Esc</Kbd>
-            <span>Dismiss</span>
-            <Kbd>Cmd+Enter</Kbd>
-            <span>Send</span>
-          </span>
-          <div className={styles.actions}>
+        {/* Sticky Action Footer */}
+        <footer className={styles.stickyFooter}>
+          <div className={styles.footerLeft}>
+            <button
+              type="button"
+              className={styles.attachButton}
+              onClick={() => fileInputRef.current?.click()}
+              disabled={sending}
+            >
+              <PaperclipIcon width={16} height={16} />
+              <span>파일 첨부</span>
+            </button>
+            <span className={styles.metaInfo}>
+              {recipientCount > 0 && `${recipientCount}명에게 발송 · `}{bodyLength}자
+            </span>
+          </div>
+
+          <div className={styles.footerRight}>
+            <span className={styles.shortcutHint}>
+              <Kbd>Esc</Kbd> 닫기 · <Kbd>Cmd+Enter</Kbd> 전송
+            </span>
             <Button variant="secondary" type="button" onClick={onClose}>
-              Cancel
+              취소
             </Button>
             <Button
               variant="primary"
               shortcut="Cmd+Enter"
               tooltip="Send message"
               type="submit"
-              disabled={
-                sending ||
-                !draft.subject.trim() ||
-                !draft.bodyText.trim() ||
-                !draft.to.trim() ||
-                (requiresAccount && !draft.accountId.trim())
-              }
+              disabled={!isFormValid}
             >
-              {sending ? "Sending..." : "Send"}
+              {sending ? "전송 중..." : "전송"}
             </Button>
           </div>
-        </div>
+        </footer>
       </form>
     </section>
   );

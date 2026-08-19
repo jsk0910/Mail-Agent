@@ -1,4 +1,4 @@
-import { CanActivate, ExecutionContext, Injectable } from "@nestjs/common";
+import { CanActivate, ExecutionContext, Injectable, UnauthorizedException } from "@nestjs/common";
 
 import { AppConfigService } from "../../config/app-config.service";
 import { SessionService } from "../../modules/auth/session.service";
@@ -29,6 +29,14 @@ export class UserContextGuard implements CanActivate {
       if (sessionUser) {
         return sessionUser;
       }
+    }
+
+    if (!this.appConfigService.allowDevelopmentIdentity) {
+      const path = request.url?.split("?")[0] || "";
+      if (path === "/api/health" || path.startsWith("/api/auth/google/")) {
+        return { email: "", name: "OAuth user", source: "default" };
+      }
+      throw new UnauthorizedException("A valid desktop session is required.");
     }
 
     const email = this.readHeader(request, "x-user-email") || this.appConfigService.defaultUserEmail;

@@ -5,4 +5,13 @@ dist
 .env
 .env.local
 coverage
+apps/desktop/resources/.cache/
+apps/desktop/resources/bin/
+apps/desktop/resources/models/
+apps/desktop/release/
+release/
+*.tsbuildinfo
 pnpm-lock.yaml
+.DS_Store
+Thumbs.db
+

@@ -1,6 +1,6 @@
 import { FormEvent, useEffect, useState } from "react";
 import { Attachment, MessageDetail } from "@mail-agent/shared";
-import { ArchiveIcon, ChevronDownIcon, MoreIcon, ReplyIcon } from "./icons";
+import { ArchiveIcon, ChevronDownIcon, MoreIcon, ReplyIcon, SparkIcon } from "./icons";
 import { ComposerAttachmentItem, getAttachmentSummary } from "./attachmentUtils";
 import { ComposerPanel } from "./ComposerPanel";
 import { Button } from "./ui/Button";
@@ -9,7 +9,7 @@ import styles from "./DetailColumn.module.css";
 
 type DetailFetchState = "idle" | "loading" | "ready" | "error";
 type ComposerMode = "compose" | "reply" | "replyAll" | "forward";
-type AnalysisState = "pending" | "loading" | "ready" | "failed";
+type AnalysisState = "pending" | "loading" | "ready" | "basic" | "invalid" | "failed";
 
 interface ComposerDraft {
   accountId: string;
@@ -60,6 +60,9 @@ interface DetailColumnProps {
   onOpenComposer: (mode: ComposerMode) => void;
   onRetryFailedAction: (() => void) | null;
   onSelectBack: () => void;
+  onDownloadAttachment?: (attachment: Attachment) => void;
+  onTriggerAnalysis?: () => void;
+  onUseSuggestedReply?: (suggestedText: string) => void;
   selectedAccountLabel: string;
   selectedDetail: MessageDetail | null;
   analysisState: AnalysisState;
@@ -86,128 +89,127 @@ function getThreadStatus(detail: MessageDetail) {
 }
 
 function createAiPreview(detail: MessageDetail) {
-  const rawText = (detail.bodyText || detail.snippet || "").trim();
-  const sentences = rawText
-    .split(/\n+/)
-    .map((line) => line.trim())
-    .filter(Boolean);
-  const summary = sentences[0] || "AI summary will appear here once message content is available.";
-  const priority = detail.isStarred ? "High" : detail.isRead ? "Medium" : "High";
-  const needsReply =
-    /reply|respond|follow up|can you|please send|let me know/i.test(rawText) ||
-    detail.fromEmail.includes("vc") ||
-    !detail.isRead;
-  const actionItems: Array<{ id: string; text: string }> = [];
+  if (detail.analysis) {
+    const priority =
+      detail.analysis.priority === "high"
+        ? "High"
+        : detail.analysis.priority === "medium"
+          ? "Medium"
+          : "Low";
+    const needsReply = detail.analysis.requiresReply;
+    const actionItems: Array<{ id: string; text: string }> = [];
 
-  if (needsReply) {
-    actionItems.push({
-      id: "reply-draft",
-      text: "Open a reply draft before leaving this thread."
-    });
+    if (detail.analysis.suggestedActions && detail.analysis.suggestedActions.length > 0) {
+      detail.analysis.suggestedActions.forEach((action, idx) => {
+        actionItems.push({
+          id: `action-${idx}`,
+          text: action
+        });
+      });
+    }
+
+    const suggestedReply =
+      detail.analysis.suggestedReply ||
+      (needsReply
+        ? `안녕하세요 ${detail.fromName || detail.fromEmail.split("@")[0]}님, 보내주신 메일 확인했습니다. 검토 후 회신 드리겠습니다.`
+        : "");
+
+    return {
+      actionItems,
+      needsReply,
+      priority,
+      priorityReason: detail.analysis.priorityReason,
+      intent: detail.analysis.intent,
+      keyPoints: detail.analysis.keyPoints || [],
+      suggestedReply,
+      summary: detail.analysis.summary,
+      category: detail.analysis.category,
+      dueDate: detail.analysis.dueDate,
+      confidence: detail.analysis.confidence,
+      source: detail.analysis.source || "heuristic",
+      status: detail.analysis.status || "completed",
+      model: detail.analysis.model,
+      qualityIssues: detail.analysis.qualityIssues || []
+    };
   }
 
-  if (detail.hasAttachments) {
-    actionItems.push({
-      id: "review-attachment",
-      text: "Review the attachment before archiving."
-    });
-  }
-
-  if (detail.labels.includes("finance")) {
-    actionItems.push({
-      id: "finance-follow-up",
-      text: "Track the due date or hand this to finance."
-    });
-  }
-
-  if (actionItems.length === 0) {
-    actionItems.push({
-      id: "archive-fyi",
-      text: "This thread looks informational and can be archived after review."
-    });
-  }
-
-  const suggestedReply = needsReply
-    ? `Thanks ${detail.fromName || detail.fromEmail.split("@")[0]}, I reviewed this and will follow up shortly.`
-    : "No reply suggested for this thread right now.";
-
-  return {
-    actionItems,
-    needsReply,
-    priority,
-    suggestedReply,
-    summary
-  };
+  return null;
 }
 
-function getThreadIntent(detail: MessageDetail) {
-  if (detail.isStarred) {
+function getInitials(name?: string, fallback = "M") {
+  if (!name || !name.trim()) {
+    return fallback;
+  }
+  const parts = name.trim().split(/[\s@._-]+/).filter(Boolean);
+  if (parts.length >= 2) {
+    return (parts[0][0] + parts[1][0]).toUpperCase();
+  }
+  return name.slice(0, 2).toUpperCase();
+}
+
+function getCategoryInfo(detail: MessageDetail) {
+  if (detail.analysis?.category) {
     return {
-      label: "Priority thread",
-      description: "Flagged for follow-up and should stay visible until you act."
+      label: `✨ ${detail.analysis.category}`,
+      isAi: detail.analysis.source === "qwen" && detail.analysis.status === "completed"
     };
   }
 
-  if (!detail.isRead) {
+  const categoryLabel = detail.labels.find((label) => label.startsWith("CATEGORY_"));
+  if (categoryLabel) {
+    const raw = categoryLabel.replace("CATEGORY_", "").toLowerCase().replace(/_/g, " ");
+    const nameMap: Record<string, string> = {
+      personal: "Personal",
+      social: "Social",
+      promotions: "Promotions",
+      updates: "Updates",
+      forums: "Forums"
+    };
     return {
-      label: "Needs review",
-      description: "Unread and waiting for a first pass before you decide the next step."
+      label: nameMap[raw] || raw,
+      isAi: false
     };
   }
 
-  if (detail.hasAttachments) {
-    return {
-      label: "Review attachment",
-      description: "The message is mostly informational, but the attachment likely matters."
-    };
-  }
-
-  return {
-    label: "Informational",
-    description: "This thread looks safe to scan quickly and archive if nothing else is needed."
-  };
+  return null;
 }
 
 function renderAttachments(
   attachments: Attachment[],
-  formatFileSize: (size: number) => string
+  formatFileSize: (size: number) => string,
+  onDownloadAttachment?: (attachment: Attachment) => void
 ) {
   if (attachments.length === 0) {
-    return <p className={styles.emptyCopy}>No attachments on this message.</p>;
+    return null;
   }
 
   return (
-    <div className={styles.attachmentList}>
+    <div className={styles.attachmentGrid}>
       {attachments.map((attachment) => {
         const summary = getAttachmentSummary(attachment);
 
         return (
           <article key={attachment.id} className={styles.attachmentCard}>
+            <div className={styles.attachmentIconBox}>
+              <span className={styles.attachmentIconText}>
+                {summary.filename.split(".").pop()?.toUpperCase().slice(0, 4) || "FILE"}
+              </span>
+            </div>
             <div className={styles.attachmentBody}>
-              <div className={styles.attachmentHeader}>
-                <p className={styles.attachmentTitle}>{summary.filename}</p>
-                <Chip tone={summary.tone}>{summary.kindLabel}</Chip>
-              </div>
+              <p className={styles.attachmentTitle} title={summary.filename}>{summary.filename}</p>
               <p className={styles.attachmentMeta}>
-                {summary.mimeType} · {formatFileSize(attachment.size)}
-              </p>
-              <p className={styles.attachmentFootnote}>
-                {summary.kind === "image" &&
-                  "Preview-friendly asset for design or visual review."}
-                {summary.kind === "video" &&
-                  "Playback asset that usually benefits from inline preview later."}
-                {summary.kind === "archive" &&
-                  "Bundled files that should stay explicit before download or extraction."}
-                {summary.kind === "code" &&
-                  "Source or log artifact that may need inspection before reply or archive."}
-                {summary.kind === "document" &&
-                  "Reference document kept visible for review and follow-up."}
-                {summary.kind === "other" && "Stored as a standard file attachment."}
-                {summary.kind === "audio" &&
-                  "Audio attachment available for later playback support."}
+                {formatFileSize(attachment.size)}
               </p>
             </div>
-            <Chip>{attachment.storageMode === "mirror" ? "Mirrored" : "Provider file"}</Chip>
+            {onDownloadAttachment && (
+              <Button
+                compact
+                variant="secondary"
+                onClick={() => onDownloadAttachment(attachment)}
+              >
+                Download
+              </Button>
+            )}
           </article>
         );
       })}
@@ -246,11 +248,14 @@ export function DetailColumn({
   onComposerSubmit,
   onDelete,
   onDismissDetailFeedback,
+  onDownloadAttachment,
   onLabelInputChange,
   onMarkReadToggle,
   onOpenComposer,
   onRetryFailedAction,
   onSelectBack,
+  onTriggerAnalysis,
+  onUseSuggestedReply,
   analysisState,
   selectedAccountLabel,
   selectedDetail
@@ -258,62 +263,107 @@ export function DetailColumn({
   const showInlineComposer = composerOpen && composerMode !== "compose";
   const showDockComposer = composerOpen && composerMode === "compose";
   const showComposeWorkspace = showDockComposer && !selectedDetail;
-  const recipientSummary = selectedDetail?.to.slice(0, 2).join(", ") || "-";
-  const remainingRecipients = Math.max((selectedDetail?.to.length ?? 0) - 2, 0);
   const aiPreview = selectedDetail ? createAiPreview(selectedDetail) : null;
-  const threadIntent = selectedDetail ? getThreadIntent(selectedDetail) : null;
-  const [queuedActionItems, setQueuedActionItems] = useState<string[]>([]);
+  const categoryInfo = selectedDetail ? getCategoryInfo(selectedDetail) : null;
+  const isAiHigh = selectedDetail?.analysis?.priority === "high";
   const [workspaceLinked, setWorkspaceLinked] = useState(false);
+  const [showAiDetails, setShowAiDetails] = useState(false);
+
+  // 다중 스레드 메시지 목록
+  const threadMessages: MessageDetail[] =
+    selectedDetail?.threadMessages && selectedDetail.threadMessages.length > 0
+      ? selectedDetail.threadMessages
+      : selectedDetail
+        ? [selectedDetail]
+        : [];
+
+  const threadCount = threadMessages.length;
+  const latestMessageId = threadMessages[threadMessages.length - 1]?.id;
+  const threadMessageIds = threadMessages.map((message) => message.id).join("|");
+
+  // 펼쳐진 메시지 ID 집합 (최신 메시지는 기본 펼침)
+  const [expandedIds, setExpandedIds] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     if (!selectedDetail) {
-      setQueuedActionItems([]);
       setWorkspaceLinked(false);
+      setShowAiDetails(false);
+      setExpandedIds({});
       return;
     }
 
-    setQueuedActionItems([]);
     setWorkspaceLinked(selectedDetail.labels.includes("notion-linked"));
-  }, [selectedDetail]);
+    setShowAiDetails(false);
 
-  function toggleQueuedActionItem(itemId: string) {
-    setQueuedActionItems((current) =>
-      current.includes(itemId)
-        ? current.filter((value) => value !== itemId)
-        : [...current, itemId]
-    );
+    // 기본값: 최신 메시지만 펼치고 이전 메시지는 접힘
+    const initialExpanded: Record<string, boolean> = {};
+    threadMessages.forEach((msg, idx) => {
+      // 마지막(최신) 메시지는 기본 펼침
+      initialExpanded[msg.id] = idx === threadMessages.length - 1;
+    });
+    setExpandedIds(initialExpanded);
+  }, [selectedDetail?.id, threadMessageIds]);
+
+  function toggleMessageExpand(messageId: string) {
+    setExpandedIds((prev) => ({
+      ...prev,
+      [messageId]: !prev[messageId]
+    }));
   }
+
+  function expandAllMessages() {
+    const allExpanded: Record<string, boolean> = {};
+    threadMessages.forEach((msg) => {
+      allExpanded[msg.id] = true;
+    });
+    setExpandedIds(allExpanded);
+  }
+
+  function collapseOlderMessages() {
+    const olderCollapsed: Record<string, boolean> = {};
+    threadMessages.forEach((msg, idx) => {
+      olderCollapsed[msg.id] = idx === threadMessages.length - 1;
+    });
+    setExpandedIds(olderCollapsed);
+  }
+
+  const allExpanded =
+    threadMessages.length > 1 &&
+    threadMessages.every((msg) => expandedIds[msg.id]);
 
   return (
     <section className={styles.column}>
+      {/* Top Sticky Toolbar */}
       <header className={styles.toolbar}>
-        <div className={styles.subjectBlock}>
-          {selectedDetail ? (
-            <>
-              <div className={styles.threadMeta}>
+        <div className={styles.toolbarLeft}>
+          <Button variant="ghost" compact onClick={onSelectBack}>
+            ← Back
+          </Button>
+          {selectedDetail && (
+            <div className={styles.toolbarStatusGroup}>
+              {isAiHigh ? (
+                <Chip tone="warning">🔥 중요</Chip>
+              ) : (
                 <Chip tone={!selectedDetail.isRead ? "active" : "default"}>
                   {getThreadStatus(selectedDetail)}
                 </Chip>
-                <Chip>{selectedAccountLabel}</Chip>
-                <Chip>{selectedDetail.attachments.length > 0 ? "Attachments" : "No attachments"}</Chip>
-              </div>
-              <h2 className={styles.subject}>{selectedDetail.subject}</h2>
-            </>
-          ) : showComposeWorkspace ? (
-            <>
-              <div className={styles.threadMeta}>
-                <Chip tone="active">Compose</Chip>
-              </div>
-              <h2 className={styles.subject}>New message</h2>
-            </>
-          ) : (
-            <div className={styles.subjectPlaceholder}>Select a message to read it here</div>
+              )}
+              {categoryInfo && (
+                <Chip tone={categoryInfo.isAi ? "active" : "default"}>
+                  {categoryInfo.label}
+                </Chip>
+              )}
+              {selectedAccountLabel && (
+                <Chip tone="default">{selectedAccountLabel}</Chip>
+              )}
+              {threadCount > 1 && (
+                <Chip tone="active">대화 {threadCount}개</Chip>
+              )}
+            </div>
           )}
         </div>
+
         <div className={styles.toolbarActions}>
-          <Button variant="ghost" compact onClick={onSelectBack}>
-            Back
-          </Button>
           <Button
             id="detail-reply-button"
             variant="primary"
@@ -403,6 +453,7 @@ export function DetailColumn({
         </div>
       </header>
 
+      {/* Action feedback message */}
       {(detailActionError || detailActionSuccess || latestFailedAction) && (
         <div className={styles.feedback} aria-live="polite">
           {detailActionError && (
@@ -439,7 +490,8 @@ export function DetailColumn({
         </div>
       )}
 
-      <div className={`${styles.body}${showInlineComposer ? ` ${styles.bodyWithReplyOverlay}` : ""}`}>
+      {/* Main Scrollable Body */}
+      <div className={styles.body}>
         {showComposeWorkspace && (
           <section className={styles.composeWorkspace}>
             <ComposerPanel
@@ -465,20 +517,24 @@ export function DetailColumn({
         {!showComposeWorkspace && detailFetchState === "idle" && (
           <section className={styles.idle}>
             <div className={styles.idleCard}>
+              <div className={styles.idleIcon}>✉️</div>
               <h3 className={styles.emptyTitle}>Select a message</h3>
               <p className={styles.emptyCopy}>Open any thread to review participants, context, and next action here.</p>
-              <p className={styles.emptyCopy}>Keyboard: ↑↓ navigate, r reply, e archive.</p>
+              <div className={styles.keyboardHints}>
+                <span><kbd>↑</kbd><kbd>↓</kbd> navigate</span>
+                <span><kbd>R</kbd> reply</span>
+                <span><kbd>E</kbd> archive</span>
+              </div>
             </div>
           </section>
         )}
 
         {!showComposeWorkspace && detailFetchState === "loading" && (
-          <>
-            <span className={`${styles.skeleton} ${styles.skeletonTitle}`} />
-            <span className={`${styles.skeleton} ${styles.skeletonMeta}`} />
+          <div className={styles.skeletonContainer}>
+            <span className={`${styles.skeleton} ${styles.skeletonHeader}`} />
+            <span className={`${styles.skeleton} ${styles.skeletonCard}`} />
             <span className={`${styles.skeleton} ${styles.skeletonBody}`} />
-            <span className={`${styles.skeleton} ${styles.skeletonBody}`} />
-          </>
+          </div>
         )}
 
         {!showComposeWorkspace && detailFetchState === "error" && (
@@ -491,248 +547,357 @@ export function DetailColumn({
         )}
 
         {detailFetchState === "ready" && selectedDetail && (
-          <>
-            <section className={styles.overviewCard}>
-              <div className={styles.overviewHero}>
-                <div className={styles.overviewBlock}>
-                  <span className={styles.overviewLabel}>Latest message</span>
-                  <span className={styles.overviewValue}>
-                    {formatParticipant(selectedDetail.fromEmail, selectedDetail.fromName)}
-                  </span>
-                  <p className={styles.overviewCopy}>
-                    Sent to {recipientSummary}
-                    {remainingRecipients > 0 ? ` +${remainingRecipients} more` : ""} via{" "}
-                    {selectedAccountLabel}.
-                  </p>
-                </div>
-                <div className={styles.overviewCallout}>
-                  <span className={styles.overviewLabel}>What to do next</span>
-                  <span className={styles.overviewValue}>{threadIntent?.label}</span>
-                  <p className={styles.overviewCopy}>{threadIntent?.description}</p>
-                </div>
-              </div>
-
-              <div className={styles.overviewFacts}>
-                <div className={styles.overviewBlock}>
-                  <span className={styles.overviewLabel}>Received</span>
-                  <span className={styles.overviewValue}>
-                    {formatReceivedAtLong(selectedDetail.receivedAt)}
-                  </span>
-                </div>
-                <div className={styles.overviewBlock}>
-                  <span className={styles.overviewLabel}>Thread</span>
-                  <span className={styles.overviewValue}>
-                    {selectedDetail.threadId ? "Tracked conversation" : "Single message"}
-                  </span>
-                </div>
-                <div className={styles.overviewBlock}>
-                  <span className={styles.overviewLabel}>Recipients</span>
-                  <span className={styles.overviewValue}>
-                    {selectedDetail.to.length + selectedDetail.cc.length}
-                  </span>
-                </div>
-                <div className={styles.overviewBlock}>
-                  <span className={styles.overviewLabel}>Attachments</span>
-                  <span className={styles.overviewValue}>
-                    {selectedDetail.attachments.length || "None"}
-                  </span>
-                </div>
-              </div>
-            </section>
-
-            <details className={styles.metaBar}>
-              <summary className={styles.metaSummary}>
-                <span>Participants and full headers</span>
-                <span>·</span>
-                <span>Expand details</span>
-              </summary>
-              <div className={styles.metaGrid}>
-                <div className={styles.metaRow}>
-                  <span className={styles.metaLabel}>From</span>
-                  <span className={styles.metaValue}>
-                    {formatParticipant(selectedDetail.fromEmail, selectedDetail.fromName)}
-                  </span>
-                </div>
-                <div className={styles.metaRow}>
-                  <span className={styles.metaLabel}>To</span>
-                  <span className={styles.metaValue}>{selectedDetail.to.join(", ") || "-"}</span>
-                </div>
-                {selectedDetail.cc.length > 0 && (
-                  <div className={styles.metaRow}>
-                    <span className={styles.metaLabel}>Cc</span>
-                    <span className={styles.metaValue}>{selectedDetail.cc.join(", ")}</span>
+          <div className={styles.contentStream}>
+            {/* Thread Header Card */}
+            <article className={styles.messageHeaderCard}>
+              <div className={styles.subjectTopRow}>
+                <h1 className={styles.messageSubject}>{selectedDetail.subject}</h1>
+                {threadCount > 1 && (
+                  <div className={styles.threadControls}>
+                    <button
+                      type="button"
+                      className={styles.threadExpandButton}
+                      onClick={allExpanded ? collapseOlderMessages : expandAllMessages}
+                    >
+                      {allExpanded
+                        ? `모든 대화 접기 (총 ${threadCount}개)`
+                        : `모든 대화 펼치기 (총 ${threadCount}개)`}
+                    </button>
                   </div>
                 )}
-                <div className={styles.metaRow}>
-                  <span className={styles.metaLabel}>Account</span>
-                  <span className={styles.metaValue}>{selectedAccountLabel}</span>
-                </div>
-                <div className={styles.metaRow}>
-                  <span className={styles.metaLabel}>Received</span>
-                  <span className={styles.metaValue}>
-                    {formatReceivedAtLong(selectedDetail.receivedAt)}
+              </div>
+            </article>
+
+            {/* Smart AI Executive Briefing (Prominent Top Position) */}
+            <section className={styles.aiBriefCard}>
+              <div className={styles.aiBriefHeader}>
+                <div className={styles.aiBriefTitleGroup}>
+                  <span className={styles.aiSparkIcon}>
+                    <SparkIcon width={16} height={16} />
                   </span>
+                  <h2 className={styles.aiBriefTitle}>AI Smart Brief (Local Qwen)</h2>
+                </div>
+                <div className={styles.aiBriefHeaderRight}>
+                  <Chip tone={analysisState === "ready" ? "active" : analysisState === "invalid" ? "warning" : "default"}>
+                    {analysisState === "loading"
+                      ? "분석 중..."
+                      : analysisState === "failed"
+                        ? "분석 실패"
+                        : analysisState === "invalid"
+                          ? "분석 품질 낮음"
+                          : analysisState === "basic"
+                            ? "기본 분류"
+                        : analysisState === "ready"
+                          ? `분석 완료${aiPreview?.model ? ` · ${aiPreview.model}` : ""}`
+                          : "미분석"}
+                  </Chip>
+                  {(analysisState === "basic" || analysisState === "invalid") && (
+                    <Button variant="secondary" compact onClick={onTriggerAnalysis}>
+                      {analysisState === "invalid" ? "다시 분석" : "Qwen으로 분석"}
+                    </Button>
+                  )}
+                  {aiPreview && (
+                    <Button
+                      variant="ghost"
+                      compact
+                      onClick={() => setShowAiDetails(!showAiDetails)}
+                    >
+                      {showAiDetails ? "간략히 보기" : "세부 분석 보기"}
+                    </Button>
+                  )}
                 </div>
               </div>
-            </details>
 
-            <section className={styles.panel}>
-              <div className={styles.panelHeader}>
-                <h3 className={styles.panelTitle}>Thread reader</h3>
-                <div className={styles.panelChips}>
-                  <Chip>{detailHtml ? "HTML preferred" : "Text fallback"}</Chip>
-                  <Chip>{selectedDetail.threadId ? "Latest message visible" : "Single message"}</Chip>
-                </div>
-              </div>
-              <div className={styles.readerNote}>
-                This view is showing the latest available message from the conversation. Earlier
-                thread history will appear here as synced message history expands.
-              </div>
-              {detailHtml ? (
-                <div
-                  className={`${styles.bodyCard} ${styles.bodyHtml}`}
-                  dangerouslySetInnerHTML={{ __html: detailHtml }}
-                />
-              ) : (
-                <div className={styles.bodyCard}>
-                  <pre>{selectedDetail.bodyText || selectedDetail.snippet || "This message is empty."}</pre>
-                </div>
-              )}
-            </section>
-
-            <section className={styles.panel}>
-              <div className={styles.panelHeader}>
-                <h3 className={styles.panelTitle}>Attachments</h3>
-                <Chip>{selectedDetail.attachments.length} files</Chip>
-              </div>
-              {renderAttachments(selectedDetail.attachments, formatFileSize)}
-            </section>
-
-            <section className={styles.panel}>
-              <div className={styles.panelHeader}>
-                <h3 className={styles.panelTitle}>AI analysis</h3>
-                <Chip>
-                  {analysisState === "loading"
-                    ? "Loading"
-                    : analysisState === "failed"
-                      ? "Unavailable"
-                      : analysisState === "ready"
-                        ? "Ready"
-                        : "Pending"}
-                </Chip>
-              </div>
               {analysisState === "loading" ? (
-                <div className={styles.analysisList}>
-                  <article className={styles.analysisCard}>
-                    <div className={styles.analysisSkeletonBlock}>
-                      <span className={`${styles.skeleton} ${styles.analysisSkeletonTitle}`} />
-                      <span className={`${styles.skeleton} ${styles.analysisSkeletonLine}`} />
-                      <span className={`${styles.skeleton} ${styles.analysisSkeletonLineShort}`} />
-                    </div>
-                  </article>
+                <div className={styles.aiLoadingState}>
+                  <p className={styles.aiLoadingText}>로컬 AI 모델(Qwen)로 대화 내용을 종합 분석하고 있습니다...</p>
+                  <div className={styles.aiSkeletonBars}>
+                    <span className={`${styles.skeleton} ${styles.skeletonBar}`} style={{ width: "80%" }} />
+                    <span className={`${styles.skeleton} ${styles.skeletonBar}`} style={{ width: "60%" }} />
+                  </div>
                 </div>
-              ) : (
-                <div className={styles.analysisList}>
-                  <article className={styles.analysisCard}>
-                    <div className={styles.analysisBody}>
-                      <div className={styles.analysisBlock}>
-                        <p className={styles.analysisLabel}>Summary</p>
-                        <p className={styles.analysisMeta}>
-                          {analysisState === "failed"
-                            ? "Analysis is temporarily unavailable for this message."
-                            : aiPreview?.summary}
-                        </p>
-                      </div>
-                      {analysisState !== "failed" && aiPreview && (
-                        <>
-                          <div className={styles.analysisSignals}>
-                            <Chip tone={aiPreview.priority === "High" ? "warning" : "active"}>
-                              Priority {aiPreview.priority}
-                            </Chip>
-                            <Chip tone={aiPreview.needsReply ? "active" : "default"}>
-                              {aiPreview.needsReply ? "Reply suggested" : "No reply needed"}
-                            </Chip>
-                          </div>
-                          <div className={styles.analysisBlock}>
-                            <p className={styles.analysisLabel}>Next action</p>
-                            <div className={styles.actionItemList}>
-                              {aiPreview.actionItems.map((item) => {
-                                const isQueued = queuedActionItems.includes(item.id);
-                                return (
-                                  <article key={item.id} className={styles.actionItemCard}>
-                                    <div className={styles.actionItemBody}>
-                                      <p className={styles.analysisLabel}>{item.text}</p>
-                                      <p className={styles.analysisMeta}>
-                                        {isQueued
-                                          ? "Queued for workspace review. You can remove it before anything is pushed."
-                                          : "Nothing happens until you explicitly queue or send this task."}
-                                      </p>
-                                    </div>
-                                    <Button
-                                      variant={isQueued ? "ghost" : "secondary"}
-                                      compact
-                                      type="button"
-                                      onClick={() => toggleQueuedActionItem(item.id)}
-                                    >
-                                      {isQueued ? "Remove from queue" : "Push to workspace"}
-                                    </Button>
-                                  </article>
-                                );
-                              })}
-                            </div>
-                          </div>
-                          <div className={styles.analysisBlock}>
-                            <p className={styles.analysisLabel}>Suggested reply opener</p>
-                            <p className={styles.analysisMeta}>{aiPreview.suggestedReply}</p>
-                          </div>
-                          <div className={styles.analysisActions}>
-                            <Button
-                              variant="secondary"
-                              compact
-                              onClick={() => onOpenComposer("reply")}
-                            >
-                              Open reply draft
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              compact
-                              disabled={detailActionLoading}
-                              onClick={onArchive}
-                            >
-                              Archive after review
-                            </Button>
-                          </div>
-                          <p className={styles.analysisFootnote}>
-                            AI suggestions do nothing until you choose an action.
-                          </p>
-                        </>
+              ) : aiPreview ? (
+                <div className={styles.aiBriefContent}>
+                  {analysisState === "basic" && (
+                    <div className={styles.aiQualityNotice}>
+                      현재 내용은 키워드 기반 기본 분류입니다. 정확한 요약이 필요하면 Qwen 분석을 실행하세요.
+                    </div>
+                  )}
+                  {analysisState === "invalid" && (
+                    <div className={styles.aiQualityNotice}>
+                      <strong>분석 결과를 신뢰하기 어렵습니다.</strong>
+                      {aiPreview.qualityIssues.length > 0 && (
+                        <span>{aiPreview.qualityIssues.join(" ")}</span>
                       )}
                     </div>
-                  </article>
+                  )}
+                  {aiPreview.intent && (
+                    <div className={styles.aiIntentRow}>
+                      <span className={styles.aiIntentBadge}>발신 의도</span>
+                      <span className={styles.aiIntentText}>{aiPreview.intent}</span>
+                    </div>
+                  )}
+
+                  <div className={styles.aiSummaryBox}>
+                    <p className={styles.aiSummaryText}>{aiPreview.summary}</p>
+                  </div>
+
+                  {/* Badges row */}
+                  <div className={styles.aiTagsRow}>
+                    <Chip tone={aiPreview.priority === "High" ? "warning" : "active"}>
+                      우선순위: {aiPreview.priority}
+                    </Chip>
+                    {aiPreview.category && (
+                      <Chip tone="default">분류: {aiPreview.category}</Chip>
+                    )}
+                    {aiPreview.dueDate && (
+                      <Chip tone="warning">마감/일정: {new Date(aiPreview.dueDate).toLocaleDateString()}</Chip>
+                    )}
+                    <Chip tone={aiPreview.needsReply ? "active" : "default"}>
+                      {aiPreview.needsReply ? "답장 필요" : "답장 불필요"}
+                    </Chip>
+                  </div>
+
+                  {/* Expandable Details */}
+                  {showAiDetails && (
+                    <div className={styles.aiExpandedSection}>
+                      {aiPreview.keyPoints && aiPreview.keyPoints.length > 0 && (
+                        <div className={styles.aiSubBlock}>
+                          <h4 className={styles.aiSubHeading}>주요 세부 사항 (Key Points)</h4>
+                          <ul className={styles.aiBulletList}>
+                            {aiPreview.keyPoints.map((point, idx) => (
+                              <li key={idx}>{point}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+
+                      {aiPreview.actionItems.length > 0 && (
+                        <div className={styles.aiSubBlock}>
+                          <h4 className={styles.aiSubHeading}>추천 후속 조치 (Next Actions)</h4>
+                          <ul className={styles.aiBulletList}>
+                            {aiPreview.actionItems.map((item) => (
+                              <li key={item.id}>{item.text}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+
+                      {aiPreview.priorityReason && (
+                        <p className={styles.aiPriorityReason}>
+                          💡 중요도 사유: {aiPreview.priorityReason}
+                        </p>
+                      )}
+                    </div>
+                  )}
+
+                  {/* AI Quick Reply Draft Box */}
+                  {aiPreview.suggestedReply && (
+                    <div className={styles.aiReplyDraftCard}>
+                      <div className={styles.aiReplyDraftHeader}>
+                        <span className={styles.aiReplyDraftLabel}>AI 추천 회신 초안</span>
+                        <Button
+                          variant="primary"
+                          compact
+                          onClick={() => {
+                            if (onUseSuggestedReply) {
+                              onUseSuggestedReply(aiPreview.suggestedReply);
+                            } else {
+                              onOpenComposer("reply");
+                            }
+                          }}
+                        >
+                          초안 적용하여 답장하기
+                        </Button>
+                      </div>
+                      <div className={styles.aiReplyDraftBody}>
+                        {aiPreview.suggestedReply}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className={styles.aiEmptyState}>
+                  <p className={styles.aiEmptyText}>아직 로컬 AI 분석이 수행되지 않은 메일입니다.</p>
+                  <Button variant="secondary" compact onClick={onTriggerAnalysis}>
+                    <SparkIcon width={14} height={14} />
+                    <span style={{ marginLeft: "6px" }}>AI 분석 실행 (Qwen)</span>
+                  </Button>
                 </div>
               )}
             </section>
 
-            <section className={styles.panel}>
+            {/* Conversation Thread Messages Stream */}
+            <div className={styles.threadStream}>
+              {threadMessages.map((msg, index) => {
+                const isExpanded = Boolean(expandedIds[msg.id]);
+                const isLatest = index === threadMessages.length - 1;
+                const isSelf = msg.labels.includes("SENT") || msg.fromName?.includes("나");
+                const recipients = msg.to.slice(0, 2).join(", ");
+                const remaining = Math.max(msg.to.length - 2, 0);
+
+                return (
+                  <article
+                    key={msg.id}
+                    className={`${styles.threadMessageCard}${
+                      isExpanded ? ` ${styles.threadMessageExpanded}` : ` ${styles.threadMessageCollapsed}`
+                    }${isSelf ? ` ${styles.threadMessageSelf}` : ""}${
+                      isLatest ? ` ${styles.threadMessageLatest}` : ""
+                    }`}
+                  >
+                    {/* Collapsed view header */}
+                    {!isExpanded ? (
+                      <div
+                        className={styles.collapsedHeader}
+                        onClick={() => toggleMessageExpand(msg.id)}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter" || event.key === " ") {
+                            event.preventDefault();
+                            toggleMessageExpand(msg.id);
+                          }
+                        }}
+                        role="button"
+                        tabIndex={0}
+                        aria-expanded={false}
+                        aria-controls={`thread-message-${msg.id}`}
+                      >
+                        <div className={styles.collapsedLeft}>
+                          <div
+                            className={`${styles.avatarCircleSmall}${
+                              isSelf ? ` ${styles.avatarSelf}` : ""
+                            }`}
+                          >
+                            {getInitials(msg.fromName || msg.fromEmail, isSelf ? "ME" : "M")}
+                          </div>
+                          <span className={styles.collapsedSender}>
+                            {msg.fromName || msg.fromEmail}
+                          </span>
+                          <span className={styles.collapsedSnippet}>
+                            {msg.snippet || msg.bodyText?.slice(0, 80)}
+                          </span>
+                        </div>
+                        <div className={styles.collapsedRight}>
+                          {msg.attachments.length > 0 && (
+                            <span className={styles.collapsedAttachmentBadge} title={`${msg.attachments.length} attachments`}>
+                              📎 {msg.attachments.length}
+                            </span>
+                          )}
+                          <span className={styles.collapsedDate}>
+                            {formatReceivedAtLong(msg.receivedAt)}
+                          </span>
+                          <span className={styles.expandChevron}>▼</span>
+                        </div>
+                      </div>
+                    ) : (
+                      /* Expanded Full Message */
+                      <div
+                        className={styles.expandedContainer}
+                        id={`thread-message-${msg.id}`}
+                      >
+                        <div
+                          className={styles.expandedHeader}
+                          onClick={() => {
+                            if (threadCount > 1) {
+                              toggleMessageExpand(msg.id);
+                            }
+                          }}
+                        >
+                          <div className={styles.senderLeft}>
+                            <div
+                              className={`${styles.avatarCircle}${
+                                isSelf ? ` ${styles.avatarSelf}` : ""
+                              }`}
+                            >
+                              {getInitials(msg.fromName || msg.fromEmail, isSelf ? "ME" : "M")}
+                            </div>
+                            <div className={styles.senderDetails}>
+                              <div className={styles.senderNameLine}>
+                                <span className={styles.senderName}>
+                                  {msg.fromName || msg.fromEmail}
+                                </span>
+                                {isSelf && (
+                                  <span className={styles.selfBadge}>내 회신</span>
+                                )}
+                                {msg.fromName && (
+                                  <span className={styles.senderEmail}>
+                                    &lt;{msg.fromEmail}&gt;
+                                  </span>
+                                )}
+                              </div>
+                              <div className={styles.recipientLine}>
+                                <span>to {recipients}{remaining > 0 ? ` +${remaining}` : ""}</span>
+                                <span className={styles.dotSeparator}>·</span>
+                                <span>via {selectedAccountLabel}</span>
+                              </div>
+                            </div>
+                          </div>
+                          <div className={styles.expandedRight}>
+                            <span className={styles.dateDisplay}>
+                              {formatReceivedAtLong(msg.receivedAt)}
+                            </span>
+                            {threadCount > 1 && (
+                              <button
+                                type="button"
+                                className={styles.collapseToggleBtn}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  toggleMessageExpand(msg.id);
+                                }}
+                                title="접기"
+                              >
+                                ▲
+                              </button>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Email Content Body */}
+                        <div className={styles.expandedContentBody}>
+                          {msg.bodyHtml ? (
+                            <div
+                              className={`${styles.emailContentHtml}`}
+                              dangerouslySetInnerHTML={{ __html: msg.bodyHtml }}
+                            />
+                          ) : (
+                            <pre className={styles.emailPlainText}>
+                              {msg.bodyText || msg.snippet || "This message is empty."}
+                            </pre>
+                          )}
+                        </div>
+
+                        {/* Attachments (if message has any) */}
+                        {msg.attachments.length > 0 && (
+                          <div className={styles.expandedAttachments}>
+                            <div className={styles.panelHeader}>
+                              <h4 className={styles.attachmentHeading}>첨부파일 ({msg.attachments.length})</h4>
+                            </div>
+                            {renderAttachments(msg.attachments, formatFileSize, onDownloadAttachment)}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </article>
+                );
+              })}
+            </div>
+
+            {/* Workspace Project Context Section */}
+            <section className={styles.panelCard}>
               <div className={styles.panelHeader}>
-                <h3 className={styles.panelTitle}>Workspace link</h3>
+                <h3 className={styles.panelTitle}>Workspace Integration</h3>
                 <Chip tone={workspaceLinked ? "success" : "default"}>
                   {workspaceLinked ? "Linked" : "Not linked"}
                 </Chip>
               </div>
-              <article className={styles.workspaceCard}>
+              <div className={styles.workspaceBody}>
                 {workspaceLinked ? (
                   <>
-                    <div className={styles.workspaceBody}>
-                      <p className={styles.analysisLabel}>Connected project context</p>
-                      <p className={styles.analysisMeta}>
-                        This thread is linked to a workspace page for {selectedDetail.subject}.
-                        Related context can be enriched here before you archive or reply.
-                      </p>
-                    </div>
+                    <p className={styles.workspaceText}>
+                      이 스레드는 <strong>{selectedDetail.subject}</strong> 프로젝트 페이지와 연결되어 있습니다.
+                    </p>
                     <div className={styles.workspaceActions}>
                       <Button variant="secondary" compact type="button">
-                        Open workspace page
+                        워크스페이스 페이지 열기
                       </Button>
                       <Button
                         variant="ghost"
@@ -740,19 +905,15 @@ export function DetailColumn({
                         type="button"
                         onClick={() => setWorkspaceLinked(false)}
                       >
-                        Unlink preview
+                        연결 해제
                       </Button>
                     </div>
                   </>
                 ) : (
                   <>
-                    <div className={styles.workspaceBody}>
-                      <p className={styles.analysisLabel}>No workspace linked yet</p>
-                      <p className={styles.analysisMeta}>
-                        Link this thread when it belongs to a project, task, or shared knowledge
-                        page. The preview is local until a real integration is connected.
-                      </p>
-                    </div>
+                    <p className={styles.workspaceText}>
+                      이 메일을 프로젝트나 지식베이스 문서와 연결하여 후속 작업을 관리할 수 있습니다.
+                    </p>
                     <div className={styles.workspaceActions}>
                       <Button
                         variant="secondary"
@@ -760,43 +921,44 @@ export function DetailColumn({
                         type="button"
                         onClick={() => setWorkspaceLinked(true)}
                       >
-                        Link thread
+                        스레드 연결
                       </Button>
                     </div>
                   </>
                 )}
-              </article>
+              </div>
             </section>
-          </>
+
+            {/* Inline Quick Reply (Opens cleanly below email conversation thread) */}
+            {showInlineComposer && (
+              <section className={styles.inlineComposerSection} id="inline-composer-target">
+                <ComposerPanel
+                  accounts={accounts}
+                  attachments={composerAttachments}
+                  appearance={composerAppearance}
+                  context={{
+                    from: formatParticipant(selectedDetail.fromEmail, selectedDetail.fromName),
+                    receivedAt: formatReceivedAtLong(selectedDetail.receivedAt),
+                    subject: selectedDetail.subject
+                  }}
+                  draft={composerDraft}
+                  error={composerError}
+                  formatFileSize={formatFileSize}
+                  mode={composerMode}
+                  onAttachFiles={onAttachFiles}
+                  onAppearanceChange={onAppearanceChange}
+                  onChange={onComposerChange}
+                  onClose={onComposerClose}
+                  onRemoveAttachment={onRemoveAttachment}
+                  onSubmit={onComposerSubmit}
+                  sending={composerSending}
+                  success={composerSuccess}
+                />
+              </section>
+            )}
+          </div>
         )}
       </div>
-
-      {showInlineComposer && selectedDetail && (
-        <section className={styles.replyOverlay}>
-          <ComposerPanel
-            accounts={accounts}
-            attachments={composerAttachments}
-            appearance={composerAppearance}
-            context={{
-              from: formatParticipant(selectedDetail.fromEmail, selectedDetail.fromName),
-              receivedAt: formatReceivedAtLong(selectedDetail.receivedAt),
-              subject: selectedDetail.subject
-            }}
-            draft={composerDraft}
-            error={composerError}
-            formatFileSize={formatFileSize}
-            mode={composerMode}
-            onAttachFiles={onAttachFiles}
-            onAppearanceChange={onAppearanceChange}
-            onChange={onComposerChange}
-            onClose={onComposerClose}
-            onRemoveAttachment={onRemoveAttachment}
-            onSubmit={onComposerSubmit}
-            sending={composerSending}
-            success={composerSuccess}
-          />
-        </section>
-      )}
     </section>
   );
 }

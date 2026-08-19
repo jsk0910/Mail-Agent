@@ -6,6 +6,7 @@ import { AppShell } from "./components/AppShell";
 import { AppSidebar } from "./components/AppSidebar";
 import {
   ComposerAttachmentItem,
+  fileToBase64,
   revokeComposerAttachmentPreview,
   toComposerAttachmentItem
 } from "./components/attachmentUtils";
@@ -48,7 +49,7 @@ type FetchState = "loading" | "ready" | "empty" | "error";
 type DetailFetchState = "idle" | "loading" | "ready" | "error";
 type StatusFilterKey = "unreadOnly" | "hideArchived" | "hasAttachmentsOnly";
 type ComposerMode = "compose" | "reply" | "replyAll" | "forward";
-type MailboxView = "all" | "unread" | "starred" | "archive" | "trash";
+type MailboxView = "personal" | "all" | "unread" | "starred" | "archive" | "trash";
 type SmartView = "reply-needed" | "notion-linked" | "briefing";
 type SidebarView = MailboxView | SmartView;
 type DataMode = "api" | "demo";
@@ -258,7 +259,45 @@ function isTextInput(target: EventTarget | null) {
   );
 }
 
+function isSocialOrPromoOrUpdate(message: MessageSummary): boolean {
+  const labels = message.labels;
+  if (
+    labels.includes("CATEGORY_SOCIAL") ||
+    labels.includes("CATEGORY_PROMOTIONS") ||
+    labels.includes("CATEGORY_UPDATES") ||
+    labels.includes("CATEGORY_FORUMS")
+  ) {
+    return true;
+  }
+
+  const aiCategory = message.analysis?.category?.toLowerCase() || "";
+  if (
+    aiCategory.includes("소셜") ||
+    aiCategory.includes("프로모션") ||
+    aiCategory.includes("광고") ||
+    aiCategory.includes("뉴스레터") ||
+    aiCategory.includes("업데이트")
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+function isPersonalMessage(message: MessageSummary): boolean {
+  return !isSocialOrPromoOrUpdate(message);
+}
+
 function needsReply(message: MessageSummary) {
+  // Exclude social, promo, updates from requiring reply
+  if (isSocialOrPromoOrUpdate(message)) {
+    return false;
+  }
+
+  if (message.analysis?.requiresReply) {
+    return true;
+  }
+
   const haystack = [message.fromName, message.fromEmail, message.subject, message.snippet]
     .filter(Boolean)
     .join(" ")
@@ -272,6 +311,18 @@ function needsReply(message: MessageSummary) {
 }
 
 function messageMatchesView(message: MessageSummary, view: SidebarView) {
+  if (view === "personal") {
+    return (
+      message.labels.includes("INBOX") &&
+      !message.labels.includes("TRASH") &&
+      isPersonalMessage(message)
+    );
+  }
+
+  if (view === "all") {
+    return message.labels.includes("INBOX") && !message.labels.includes("TRASH");
+  }
+
   if (view === "unread") {
     return !message.isRead && message.labels.includes("INBOX") && !message.labels.includes("TRASH");
   }
@@ -301,10 +352,13 @@ function messageMatchesView(message: MessageSummary, view: SidebarView) {
   }
 
   if (view === "briefing") {
+    if (isSocialOrPromoOrUpdate(message)) {
+      return false;
+    }
     return (
       message.labels.includes("INBOX") &&
       !message.labels.includes("TRASH") &&
-      (message.isStarred || !message.isRead || message.hasAttachments)
+      (message.isStarred || !message.isRead || message.hasAttachments || message.analysis?.priority === "high")
     );
   }
 
@@ -312,6 +366,10 @@ function messageMatchesView(message: MessageSummary, view: SidebarView) {
 }
 
 function getViewLabel(view: SidebarView) {
+  if (view === "personal") {
+    return "Personal";
+  }
+
   if (view === "unread") {
     return "Unread";
   }
@@ -401,6 +459,10 @@ function getDefaultViewForMessage(message: MessageSummary): MailboxView {
     return "archive";
   }
 
+  if (isPersonalMessage(message)) {
+    return "personal";
+  }
+
   return "all";
 }
 
@@ -420,7 +482,7 @@ export default function HomePage() {
   const [detailActionError, setDetailActionError] = useState("");
   const [detailActionSuccess, setDetailActionSuccess] = useState("");
   const [labelInput, setLabelInput] = useState("");
-  const [mailboxView, setMailboxView] = useState<SidebarView>("all");
+  const [mailboxView, setMailboxView] = useState<SidebarView>("personal");
   const [searchQuery, setSearchQuery] = useState("");
   const [isComposerOpen, setIsComposerOpen] = useState(false);
   const [composerMode, setComposerMode] = useState<ComposerMode>("compose");
@@ -445,6 +507,7 @@ export default function HomePage() {
   const [activeCommandIndex, setActiveCommandIndex] = useState(0);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [aiEnabledByAccount, setAiEnabledByAccount] = useState<Record<string, boolean>>({});
+  const [isAnalyzingWithAi, setIsAnalyzingWithAi] = useState(false);
   const [reloadSequence, setReloadSequence] = useState(0);
   const [filters, setFilters] = useState<InboxFilters>({
     accountId: "all",
@@ -460,6 +523,21 @@ export default function HomePage() {
     async function loadInbox() {
       setFetchState("loading");
       setErrorMessage("");
+
+      if (dataMode === "demo") {
+        const demoData = createDemoInboxData();
+        if (ignore) return;
+        setDemoDetailsById(demoData.detailsById);
+        setMessages(demoData.messages);
+        setAccounts(demoData.accounts);
+        setSelectedMessageId((current) =>
+          current && demoData.messages.some((message) => message.id === current)
+            ? current
+            : demoData.messages[0]?.id || null
+        );
+        setFetchState(demoData.messages.length > 0 ? "ready" : "empty");
+        return;
+      }
 
       try {
         const headers = getRequestHeaders();
@@ -492,7 +570,6 @@ export default function HomePage() {
         const nextMessages = inboxData.items ?? [];
         const nextAccounts = accountsData.items ?? [];
 
-        setDataMode("api");
         setDemoDetailsById({});
         setMessages(nextMessages);
         setAccounts(nextAccounts);
@@ -505,17 +582,14 @@ export default function HomePage() {
           return;
         }
 
-        const demoData = createDemoInboxData();
-
-        setDataMode("demo");
-        setDemoDetailsById(demoData.detailsById);
-        setMessages(demoData.messages);
-        setAccounts(demoData.accounts);
-        setSelectedMessageId((current) =>
-          current && demoData.messages.some((message) => message.id === current) ? current : null
+        setDemoDetailsById({});
+        setMessages([]);
+        setAccounts([]);
+        setSelectedMessageId(null);
+        setFetchState("error");
+        setErrorMessage(
+          error instanceof Error ? error.message : "Unable to load the connected inbox."
         );
-        setFetchState(demoData.messages.length > 0 ? "ready" : "empty");
-        setErrorMessage("Live inbox unavailable. Showing local demo data for testing.");
       }
     }
 
@@ -524,7 +598,81 @@ export default function HomePage() {
     return () => {
       ignore = true;
     };
-  }, [reloadSequence]);
+  }, [dataMode, reloadSequence]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("status") === "success" && params.get("provider") === "gmail") {
+      const newAccountId = params.get("accountId");
+      setDetailActionSuccess("Google account connected successfully!");
+      window.history.replaceState({}, "", window.location.pathname);
+      setReloadSequence((seq) => seq + 1);
+      if (newAccountId) {
+        void handleTriggerSync(newAccountId);
+      }
+    }
+  }, []);
+
+  async function handleConnectGoogle() {
+    try {
+      const headers = getRequestHeaders();
+      const isDesktop = Boolean(window.mailAgentDesktop);
+      const returnUri = isDesktop ? "mailagent://oauth" : window.location.origin;
+      const clientType = isDesktop ? "desktop" : "web";
+      const res = await fetch(`${apiBaseUrl}/auth/google/start?clientType=${clientType}&returnUri=${encodeURIComponent(returnUri)}`, {
+        headers
+      });
+      if (!res.ok) {
+        throw new Error(`Failed to start Google OAuth (HTTP ${res.status}). Check server configuration.`);
+      }
+      const data = (await res.json()) as { authUrl?: string };
+      if (data.authUrl) {
+        if (window.mailAgentDesktop) {
+          await window.mailAgentDesktop.openOAuth(data.authUrl);
+        } else {
+          window.location.href = data.authUrl;
+        }
+      }
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Failed to start Google OAuth";
+      setDetailActionError(message);
+    }
+  }
+
+  const [syncingAccountId, setSyncingAccountId] = useState<string | null>(null);
+
+  async function handleTriggerSync(accountId: string) {
+    try {
+      setSyncingAccountId(accountId);
+      setDetailActionSuccess("Syncing emails from Gmail... Please wait a moment.");
+      const headers = getRequestHeaders();
+      const res = await fetch(`${apiBaseUrl}/sync/jobs`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          accountId,
+          mode: "initial",
+          trigger: "manual",
+          reason: "Manual sync triggered from UI"
+        })
+      });
+      if (res.ok) {
+        setDetailActionSuccess("Sync complete! Updated inbox.");
+        setReloadSequence((seq) => seq + 1);
+      } else {
+        const err = (await res.json().catch(() => null)) as { message?: string } | null;
+        setDetailActionError(err?.message || `Sync failed (status ${res.status})`);
+      }
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Failed to trigger sync";
+      setDetailActionError(message);
+    } finally {
+      setSyncingAccountId(null);
+    }
+  }
 
   useEffect(() => {
     if (!detailActionSuccess) {
@@ -666,6 +814,42 @@ export default function HomePage() {
         setSelectedDetail(detailData.item);
         setLatestFailedAction(failedActionData.item);
         setDetailFetchState("ready");
+
+        // Automatically mark as read if message is currently unread
+        if (!detailData.item.isRead) {
+          const targetId = messageId;
+          setSelectedDetail((current) =>
+            current && current.id === targetId
+              ? {
+                  ...current,
+                  isRead: true,
+                  labels: current.labels.filter((l) => l !== "UNREAD")
+                }
+              : current
+          );
+          setMessages((current) =>
+            current.map((msg) =>
+              msg.id === targetId
+                ? {
+                    ...msg,
+                    isRead: true,
+                    labels: msg.labels.filter((l) => l !== "UNREAD")
+                  }
+                : msg
+            )
+          );
+
+          void fetch(`${apiBaseUrl}/mail/messages/${targetId}/read-state`, {
+            method: "PATCH",
+            headers: getRequestHeaders(),
+            body: JSON.stringify({
+              isRead: true,
+              reason: "User opened message to read."
+            })
+          }).catch((err) => {
+            console.warn(`Failed to auto mark message ${targetId} as read:`, err);
+          });
+        }
       } catch (error) {
         if (ignore) {
           return;
@@ -836,6 +1020,11 @@ export default function HomePage() {
     filters.hasAttachmentsOnly;
 
   const mailboxItems: Array<{ count: number; key: MailboxView; label: string }> = [
+    {
+      key: "personal",
+      label: "Personal",
+      count: messages.filter((item) => messageMatchesView(item, "personal")).length
+    },
     { key: "all", label: "All Inbox", count: messages.filter((item) => messageMatchesView(item, "all")).length },
     {
       key: "unread",
@@ -1112,8 +1301,13 @@ export default function HomePage() {
     }
   }
 
-  function openComposer(mode: ComposerMode) {
-    const fallbackAccountId = selectedAccount?.id || accounts[0]?.id || "";
+  function openComposer(mode: ComposerMode, options?: { initialBodyText?: string }) {
+    const activeDropdownAccount =
+      filters.accountId !== "all"
+        ? accounts.find((account) => account.id === filters.accountId)
+        : null;
+    const fallbackAccountId =
+      selectedAccount?.id || activeDropdownAccount?.id || accounts[0]?.id || "";
     const detail = selectedDetail;
     const currentUserEmail = fallbackAccountId
       ? accounts.find((account) => account.id === fallbackAccountId)?.email || defaultUserEmail
@@ -1130,13 +1324,17 @@ export default function HomePage() {
 
     if (detail) {
       if (mode === "reply") {
+        const replyBody = options?.initialBodyText
+          ? `${options.initialBodyText}\n\n${buildQuotedBody(detail)}`
+          : buildQuotedBody(detail);
+
         nextDraft = {
           accountId: detail.accountId,
-          bodyHtml: plainTextToComposerHtml(buildQuotedBody(detail)),
+          bodyHtml: plainTextToComposerHtml(replyBody),
           to: detail.fromEmail,
           cc: "",
           subject: prefixSubject("Re: ", detail.subject),
-          bodyText: buildQuotedBody(detail)
+          bodyText: replyBody
         };
       } else if (mode === "replyAll") {
         nextDraft = {
@@ -1372,28 +1570,57 @@ export default function HomePage() {
   async function handleComposerSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
-    const payload = {
-      ...(composerMode === "compose" ? { accountId: composerDraft.accountId } : {}),
-      to: splitRecipients(composerDraft.to),
-      cc: splitRecipients(composerDraft.cc),
-      subject: composerDraft.subject.trim(),
-      bodyText: composerDraft.bodyText.trim(),
-      bodyHtml: composerDraft.bodyHtml.trim()
-    };
+    const toRecipients = splitRecipients(composerDraft.to);
+    if (toRecipients.length === 0) {
+      setComposerError("Please specify at least one recipient.");
+      return;
+    }
+
+    let bodyText = composerDraft.bodyText.trim();
+    const bodyHtml = composerDraft.bodyHtml.trim();
+    if (!bodyText && bodyHtml) {
+      bodyText = bodyHtml.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+    }
 
     setComposerState("sending");
     setComposerError("");
     setComposerSuccess("");
 
-    if (dataMode === "demo") {
-      setComposerState("idle");
-      setComposerSuccess(
-        composerAttachments.length > 0
-          ? `Demo send complete. ${composerAttachments.length} attachment${
-              composerAttachments.length === 1 ? "" : "s"
-            } stayed local in the MVP UI.`
-          : "Demo send complete. No real email was sent."
+    let outboundAttachments: Array<{
+      filename: string;
+      mimeType: string;
+      contentBase64: string;
+    }> = [];
+
+    try {
+      outboundAttachments = await Promise.all(
+        composerAttachments
+          .filter((item) => item.file)
+          .map(async (item) => ({
+            filename: item.name,
+            mimeType: item.mimeType,
+            contentBase64: await fileToBase64(item.file!)
+          }))
       );
+    } catch {
+      setComposerState("idle");
+      setComposerError("Failed to read attached file contents.");
+      return;
+    }
+
+    const payload = {
+      ...(composerMode === "compose" ? { accountId: composerDraft.accountId } : {}),
+      to: toRecipients,
+      cc: splitRecipients(composerDraft.cc),
+      subject: composerDraft.subject.trim() || "(no subject)",
+      bodyText: bodyText || "(no content)",
+      bodyHtml: bodyHtml || undefined,
+      attachments: outboundAttachments.length > 0 ? outboundAttachments : undefined
+    };
+
+    if (dataMode === "demo") {
+      closeComposer();
+      setDetailActionSuccess("데모 환경: 메일이 가상으로 전송되었습니다.");
       return;
     }
 
@@ -1417,18 +1644,54 @@ export default function HomePage() {
       }
 
       const data = (await response.json()) as SendResultResponse;
-      setComposerSuccess(
+      closeComposer();
+      setDetailActionSuccess(
         data.item.status === "sent"
-          ? composerAttachments.length > 0
-            ? "The message was sent. Attachment transport is still a placeholder in this MVP."
-            : "The message was sent."
-          : "The send flow is connected, but the SMTP transport is still a placeholder."
+          ? "메일이 성공적으로 전송되었습니다."
+          : "메일 전송이 접수되었습니다."
       );
-      setComposerState("idle");
+      setReloadSequence((seq) => seq + 1);
     } catch (error) {
       setComposerState("idle");
       setComposerError(
         error instanceof Error ? error.message : "An unknown send error occurred."
+      );
+    }
+  }
+
+  async function handleDownloadAttachment(attachment: import("@mail-agent/shared").Attachment) {
+    if (!selectedDetail) {
+      return;
+    }
+
+    if (dataMode === "demo") {
+      setDetailActionSuccess(`Demo mode: ${attachment.filename} download simulated.`);
+      return;
+    }
+
+    try {
+      const headers = getRequestHeaders();
+      const response = await fetch(
+        `${apiBaseUrl}/mail/messages/${selectedDetail.id}/attachments/${attachment.id}/download`,
+        { headers }
+      );
+
+      if (!response.ok) {
+        throw new Error(`Failed to download attachment (HTTP ${response.status})`);
+      }
+
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = attachment.filename;
+      document.body.appendChild(anchor);
+      anchor.click();
+      document.body.removeChild(anchor);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setDetailActionError(
+        err instanceof Error ? err.message : "Failed to download attachment"
       );
     }
   }
@@ -1530,18 +1793,108 @@ export default function HomePage() {
     );
   }
 
+  async function handleTriggerAnalysis() {
+    if (!selectedDetail) {
+      return;
+    }
+
+    if (dataMode === "demo") {
+      setDetailActionSuccess("데모 모드: 로컬 AI 분석이 시뮬레이션되었습니다.");
+      return;
+    }
+
+    setIsAnalyzingWithAi(true);
+    try {
+      if (window.mailAgentDesktop) {
+        const output = await window.mailAgentDesktop.analyzeMessage({
+          from: selectedDetail.fromName
+            ? `${selectedDetail.fromName} <${selectedDetail.fromEmail}>`
+            : selectedDetail.fromEmail,
+          receivedAt: selectedDetail.receivedAt,
+          subject: selectedDetail.subject,
+          bodyText: selectedDetail.bodyText || selectedDetail.snippet
+        });
+        const localResponse = await fetch(
+          `${apiBaseUrl}/agent/messages/${selectedDetail.id}/analysis/local`,
+          {
+            method: "POST",
+            headers: getRequestHeaders(),
+            body: JSON.stringify({
+              output,
+              model: "Qwen3-4B-Q4_K_M (local desktop)"
+            })
+          }
+        );
+        if (!localResponse.ok) {
+          const failure = (await localResponse.json().catch(() => null)) as { message?: string } | null;
+          throw new Error(failure?.message || `Local analysis save failed (${localResponse.status}).`);
+        }
+        const localData = (await localResponse.json()) as {
+          item: import("@mail-agent/shared").AgentAnalysis;
+        };
+        setSelectedDetail((current) =>
+          current ? { ...current, analysis: localData.item } : null
+        );
+        setDetailActionSuccess(
+          localData.item.status === "invalid"
+            ? "로컬 분석 결과의 품질이 낮습니다. 다시 분석해 주세요."
+            : "이 메일은 사용자 컴퓨터에서 로컬로 분석되었습니다."
+        );
+        return;
+      }
+
+      const response = await fetch(`${apiBaseUrl}/agent/messages/${selectedDetail.id}/analyze`, {
+        method: "POST",
+        headers: getRequestHeaders(),
+        body: JSON.stringify({})
+      });
+
+      if (!response.ok) {
+        const failure = (await response.json().catch(() => null)) as { message?: string } | null;
+        throw new Error(failure?.message || `AI analysis failed (status ${response.status}).`);
+      }
+
+      const data = (await response.json()) as { item: import("@mail-agent/shared").AgentAnalysis };
+      setSelectedDetail((current) => (current ? { ...current, analysis: data.item } : null));
+      setDetailActionSuccess(
+        data.item.status === "invalid"
+          ? "분석은 완료됐지만 결과 품질이 낮습니다. 다시 분석해 주세요."
+          : "로컬 AI(Qwen) 분석이 완료되었습니다."
+      );
+    } catch (err) {
+      setDetailActionError(
+        err instanceof Error ? err.message : "AI 분석 중 오류가 발생했습니다."
+      );
+    } finally {
+      setIsAnalyzingWithAi(false);
+    }
+  }
+
+  function handleUseSuggestedReply(suggestedText: string) {
+    openComposer("reply", { initialBodyText: suggestedText });
+  }
+
   const detailHtml =
     selectedDetail?.bodyHtml && selectedDetail.bodyHtml.trim().length > 0
       ? sanitizeMessageHtml(selectedDetail.bodyHtml)
       : "";
   const analysisState =
-    detailFetchState === "loading"
+    isAnalyzingWithAi
       ? "loading"
-      : detailFetchState === "error"
-        ? "failed"
-        : detailFetchState === "ready"
-          ? "pending"
-          : "pending";
+      : selectedDetail?.analysis?.status === "invalid"
+        ? "invalid"
+        : selectedDetail?.analysis?.status === "failed"
+          ? "failed"
+          : selectedDetail?.analysis?.source === "heuristic" ||
+              (selectedDetail?.analysis && !selectedDetail.analysis.source)
+            ? "basic"
+            : selectedDetail?.analysis
+              ? "ready"
+              : detailFetchState === "loading"
+                ? "loading"
+                : detailFetchState === "error"
+                  ? "failed"
+                  : "pending";
 
   function formatAccountSyncStatus(account: Account) {
     if (account.syncStatus === "running") {
@@ -1699,6 +2052,7 @@ export default function HomePage() {
               setDetailActionError("");
               setDetailActionSuccess("");
             }}
+            onDownloadAttachment={handleDownloadAttachment}
             onLabelInputChange={setLabelInput}
             onMarkReadToggle={() => {
               void toggleReadState();
@@ -1723,6 +2077,8 @@ export default function HomePage() {
                 : null
             }
             onSelectBack={() => setSelectedMessageId(null)}
+            onTriggerAnalysis={handleTriggerAnalysis}
+            onUseSuggestedReply={handleUseSuggestedReply}
             selectedAccountLabel={selectedAccount?.displayName || (selectedDetail ? getAccountBadge(selectedDetail) : "")}
             selectedDetail={selectedDetail}
           />
@@ -1743,6 +2099,9 @@ export default function HomePage() {
         aiEnabledByAccount={aiEnabledByAccount}
         open={isSettingsOpen}
         onClose={() => setIsSettingsOpen(false)}
+        onConnectGoogle={handleConnectGoogle}
+        onSyncAccount={handleTriggerSync}
+        syncingAccountId={syncingAccountId}
         onToggleAi={(accountId) =>
           setAiEnabledByAccount((current) => ({
             ...current,
@@ -1750,6 +2109,106 @@ export default function HomePage() {
           }))
         }
       />
+      {detailActionSuccess && (
+        <div
+          role="status"
+          aria-live="polite"
+          style={{
+            position: "fixed",
+            bottom: "24px",
+            right: "24px",
+            zIndex: 9999,
+            display: "flex",
+            alignItems: "center",
+            gap: "10px",
+            padding: "12px 18px",
+            background: "var(--surface-panel, #ffffff)",
+            color: "var(--text-strong, #1a202c)",
+            border: "1px solid var(--border-default, #e2e8f0)",
+            borderRadius: "12px",
+            boxShadow: "0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1)",
+            fontSize: "14px",
+            fontWeight: 500
+          }}
+        >
+          <span
+            style={{
+              display: "inline-block",
+              width: "8px",
+              height: "8px",
+              borderRadius: "50%",
+              backgroundColor: "var(--status-success, #10b981)"
+            }}
+          />
+          <span>{detailActionSuccess}</span>
+          <button
+            type="button"
+            onClick={() => setDetailActionSuccess("")}
+            style={{
+              background: "none",
+              border: "none",
+              cursor: "pointer",
+              marginLeft: "6px",
+              color: "var(--text-secondary, #718096)",
+              fontSize: "16px",
+              lineHeight: 1,
+              padding: "2px"
+            }}
+          >
+            ×
+          </button>
+        </div>
+      )}
+      {detailActionError && (
+        <div
+          role="alert"
+          aria-live="assertive"
+          style={{
+            position: "fixed",
+            bottom: "24px",
+            right: "24px",
+            zIndex: 9999,
+            display: "flex",
+            alignItems: "center",
+            gap: "10px",
+            padding: "12px 18px",
+            background: "var(--surface-panel, #ffffff)",
+            color: "var(--status-danger, #ef4444)",
+            border: "1px solid var(--border-danger, #fecaca)",
+            borderRadius: "12px",
+            boxShadow: "0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1)",
+            fontSize: "14px",
+            fontWeight: 500
+          }}
+        >
+          <span
+            style={{
+              display: "inline-block",
+              width: "8px",
+              height: "8px",
+              borderRadius: "50%",
+              backgroundColor: "var(--status-danger, #ef4444)"
+            }}
+          />
+          <span>{detailActionError}</span>
+          <button
+            type="button"
+            onClick={() => setDetailActionError("")}
+            style={{
+              background: "none",
+              border: "none",
+              cursor: "pointer",
+              marginLeft: "6px",
+              color: "var(--text-secondary, #718096)",
+              fontSize: "16px",
+              lineHeight: 1,
+              padding: "2px"
+            }}
+          >
+            ×
+          </button>
+        </div>
+      )}
     </>
   );
 }

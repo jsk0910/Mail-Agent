@@ -3,6 +3,8 @@ export interface AppConfig {
   apiPort: number;
   webPort: number;
   sessionTtlDays: number;
+  allowDevelopmentIdentity: boolean;
+  oauthAllowedReturnOrigins: string[];
   defaultUserEmail: string;
   defaultUserName: string;
   databaseUrl: string;
@@ -39,9 +41,16 @@ function parsePort(value: string | undefined, key: string, fallback: number): nu
 export function loadAppConfig(env: NodeJS.ProcessEnv): AppConfig {
   return {
     appEnv: env.APP_ENV?.trim() || "development",
-    apiPort: parsePort(env.API_PORT, "API_PORT", 4000),
+    apiPort: parsePort(env.API_PORT || env.PORT, "API_PORT", 4000),
     webPort: parsePort(env.WEB_PORT, "WEB_PORT", 3000),
     sessionTtlDays: parsePort(env.SESSION_TTL_DAYS, "SESSION_TTL_DAYS", 30),
+    allowDevelopmentIdentity:
+      (env.ALLOW_DEVELOPMENT_IDENTITY ?? (env.APP_ENV === "production" ? "false" : "true")) ===
+      "true",
+    oauthAllowedReturnOrigins: (env.OAUTH_ALLOWED_RETURN_ORIGINS || "http://localhost:3000")
+      .split(",")
+      .map((origin) => origin.trim())
+      .filter(Boolean),
     defaultUserEmail: env.DEFAULT_USER_EMAIL?.trim() || "dev@mail-agent.local",
     defaultUserName: env.DEFAULT_USER_NAME?.trim() || "Mail Agent Developer",
     databaseUrl: requireString(env.DATABASE_URL, "DATABASE_URL"),

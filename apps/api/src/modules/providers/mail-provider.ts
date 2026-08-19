@@ -33,6 +33,9 @@ export interface SmtpProviderContext {
   providerKind: MailProviderKind.SMTP;
   account: Account;
   config: ImapProviderConfig;
+  credentials?: {
+    password?: string;
+  };
 }
 
 export type ProviderOperationContext = GmailProviderContext | ImapProviderContext;

@@ -8,5 +8,6 @@ export interface AuthenticatedUserContext {
 
 export interface RequestWithAuthenticatedUser {
   headers: Record<string, string | string[] | undefined>;
+  url?: string;
   authenticatedUser?: AuthenticatedUserContext;
 }
