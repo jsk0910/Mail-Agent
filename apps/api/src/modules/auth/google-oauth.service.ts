@@ -104,7 +104,7 @@ export class GoogleOAuthService {
       source: "session"
     };
     const accountOwner =
-      statePayload.user.source === "session" && statePayload.user.email
+      statePayload.user?.email && statePayload.user.email.trim().length > 0
         ? statePayload.user
         : profileUser;
 
