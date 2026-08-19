@@ -126,6 +126,9 @@ app.whenReady().then(() => {
   });
 
   ipcMain.handle("local-ai:status", () => localAi.isReady());
+  ipcMain.handle("local-ai:model-status", () => localAi.getModelStatus());
+  ipcMain.handle("local-ai:download-model", () => localAi.downloadDefaultModel());
+  ipcMain.handle("local-ai:open-models-dir", () => localAi.openModelsDirectory());
   ipcMain.handle("local-ai:analyze-message", (_event, request: LocalAnalysisRequest) =>
     localAi.analyze(request)
   );

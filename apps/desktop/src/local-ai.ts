@@ -1,8 +1,10 @@
 import { ChildProcess, spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { existsSync } from "node:fs";
+import { createWriteStream, existsSync, mkdirSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { app } from "electron";
+import { app, shell } from "electron";
+import https from "node:https";
+import http from "node:http";
 
 export interface LocalAnalysisRequest {
   from: string;
@@ -15,10 +17,28 @@ export class LocalAiRuntime {
   private process: ChildProcess | null = null;
   private readonly port = 11435;
   private readonly apiKey = randomBytes(32).toString("hex");
+  private isDownloading = false;
+  private downloadProgress = 0;
 
   private getResourcePath(...parts: string[]) {
     const root = app.isPackaged ? process.resourcesPath : join(__dirname, "..", "resources");
     return join(root, ...parts);
+  }
+
+  private getUserModelsDir() {
+    const dir = join(app.getPath("userData"), "models");
+    if (!existsSync(dir)) {
+      mkdirSync(dir, { recursive: true });
+    }
+    return dir;
+  }
+
+  getModelsDirectory() {
+    return this.getUserModelsDir();
+  }
+
+  openModelsDirectory() {
+    return shell.openPath(this.getUserModelsDir());
   }
 
   private getBinaryPath() {
@@ -28,8 +48,100 @@ export class LocalAiRuntime {
       : this.getResourcePath("bin", `${process.platform}-${process.arch}`, filename);
   }
 
-  private getModelPath() {
-    return this.getResourcePath("models", "qwen3-4b-q4_k_m-00001-of-00002.gguf");
+  getModelPath(): string | null {
+    const userDir = this.getUserModelsDir();
+
+    // 1. Check in userData/models for any gguf
+    if (existsSync(userDir)) {
+      const userFiles = readdirSync(userDir).filter((f) => f.endsWith(".gguf"));
+      if (userFiles.length > 0) return join(userDir, userFiles[0]);
+    }
+
+    // 2. Check bundled resources/models
+    const resDir = this.getResourcePath("models");
+    if (existsSync(resDir)) {
+      const resFiles = readdirSync(resDir).filter((f) => f.endsWith(".gguf"));
+      if (resFiles.length > 0) return join(resDir, resFiles[0]);
+    }
+
+    return null;
+  }
+
+  getModelStatus() {
+    const modelPath = this.getModelPath();
+    return {
+      installed: Boolean(modelPath),
+      modelPath: modelPath || undefined,
+      isDownloading: this.isDownloading,
+      downloadProgress: this.downloadProgress,
+      modelsDir: this.getUserModelsDir()
+    };
+  }
+
+  async downloadDefaultModel(): Promise<string> {
+    if (this.isDownloading) {
+      throw new Error("이미 모델 다운로드가 진행 중입니다.");
+    }
+
+    const targetDir = this.getUserModelsDir();
+    const targetFile = join(targetDir, "qwen2.5-1.5b-instruct-q4_k_m.gguf");
+    if (existsSync(targetFile)) return targetFile;
+
+    const downloadUrl =
+      "https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/qwen2.5-1.5b-instruct-q4_k_m.gguf";
+
+    this.isDownloading = true;
+    this.downloadProgress = 0;
+
+    return new Promise<string>((resolve, reject) => {
+      const downloadWithRedirects = (url: string) => {
+        const client = url.startsWith("https") ? https : http;
+        client
+          .get(url, (res) => {
+            if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+              downloadWithRedirects(res.headers.location);
+              return;
+            }
+
+            if (res.statusCode !== 200) {
+              this.isDownloading = false;
+              reject(new Error(`모델 다운로드 실패 (HTTP ${res.statusCode})`));
+              return;
+            }
+
+            const totalBytes = parseInt(res.headers["content-length"] || "0", 10);
+            let receivedBytes = 0;
+            const fileStream = createWriteStream(targetFile);
+
+            res.on("data", (chunk: Buffer) => {
+              receivedBytes += chunk.length;
+              if (totalBytes > 0) {
+                this.downloadProgress = Math.round((receivedBytes / totalBytes) * 100);
+              }
+            });
+
+            res.pipe(fileStream);
+
+            fileStream.on("finish", () => {
+              fileStream.close();
+              this.isDownloading = false;
+              this.downloadProgress = 100;
+              resolve(targetFile);
+            });
+
+            fileStream.on("error", (err) => {
+              this.isDownloading = false;
+              reject(err);
+            });
+          })
+          .on("error", (err) => {
+            this.isDownloading = false;
+            reject(err);
+          });
+      };
+
+      downloadWithRedirects(downloadUrl);
+    });
   }
 
   async start() {
@@ -37,8 +149,13 @@ export class LocalAiRuntime {
 
     const binary = this.getBinaryPath();
     const model = this.getModelPath();
-    if (!existsSync(binary) || !existsSync(model)) {
-      throw new Error("로컬 AI 런타임 또는 Qwen 모델 리소스가 설치되지 않았습니다.");
+
+    if (!existsSync(binary)) {
+      throw new Error("로컬 AI 런타임 바이너리가 설치되지 않았습니다.");
+    }
+
+    if (!model || !existsSync(model)) {
+      throw new Error("Qwen 모델(.gguf)이 없습니다. 모델을 다운로드하거나 models 폴더에 넣어주세요.");
     }
 
     this.process = spawn(
@@ -75,7 +192,7 @@ export class LocalAiRuntime {
         Authorization: `Bearer ${this.apiKey}`
       },
       body: JSON.stringify({
-        model: "qwen3-4b-q4_k_m",
+        model: "qwen-local",
         temperature: 0.1,
         max_tokens: 1500,
         response_format: { type: "json_object" },

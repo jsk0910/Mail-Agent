@@ -12,11 +12,6 @@ module.exports = {
   files: ["dist/**/*", "package.json"],
   extraResources: [
     {
-      from: "resources/models",
-      to: "models",
-      filter: ["qwen3-4b-q4_k_m-*.gguf"]
-    },
-    {
       from: path.join("resources/bin", runtimeDirectory),
       to: "bin"
     }
