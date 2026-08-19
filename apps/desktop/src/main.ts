@@ -48,7 +48,6 @@ function handleDeepLink(url: string) {
   const callback = new URL(url);
   const token = callback.searchParams.get("sessionToken");
   if (token) saveSessionToken(token);
-  callback.searchParams.delete("sessionToken");
   const target = new URL(webUrl);
   callback.searchParams.forEach((value, key) => target.searchParams.set(key, value));
   void mainWindow?.loadURL(target.toString());
@@ -136,6 +135,10 @@ app.whenReady().then(() => {
       throw new Error("허용되지 않은 OAuth URL입니다.");
     }
     return shell.openExternal(parsed.toString());
+  });
+  ipcMain.handle("desktop:get-session-token", () => sessionToken);
+  ipcMain.handle("desktop:set-session-token", (_event, token: string) => {
+    saveSessionToken(token);
   });
 
   createWindow();

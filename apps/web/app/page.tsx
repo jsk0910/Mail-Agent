@@ -664,9 +664,20 @@ export default function HomePage() {
 
         let activeToken = paramSessionToken || localStorage.getItem(SESSION_STORAGE_KEY);
 
+        if (!activeToken && typeof window !== "undefined" && window.mailAgentDesktop?.getSessionToken) {
+          try {
+            activeToken = (await window.mailAgentDesktop.getSessionToken()) || null;
+          } catch {
+            // ignore
+          }
+        }
+
         if (paramSessionToken) {
           localStorage.setItem(SESSION_STORAGE_KEY, paramSessionToken);
           setSessionToken(paramSessionToken);
+          if (typeof window !== "undefined" && window.mailAgentDesktop?.setSessionToken) {
+            void window.mailAgentDesktop.setSessionToken(paramSessionToken);
+          }
           window.history.replaceState({}, "", window.location.pathname);
           if (paramStatus === "success" && paramProvider === "gmail") {
             setDetailActionSuccess("Google account connected successfully!");
@@ -700,6 +711,9 @@ export default function HomePage() {
             localStorage.removeItem(SESSION_STORAGE_KEY);
             localStorage.removeItem("mail_agent_user_email");
             localStorage.removeItem("mail_agent_user_name");
+            if (typeof window !== "undefined" && window.mailAgentDesktop?.setSessionToken) {
+              void window.mailAgentDesktop.setSessionToken("");
+            }
             setSessionToken(null);
             setCurrentUser(null);
           }
@@ -735,6 +749,9 @@ export default function HomePage() {
         localStorage.removeItem(SESSION_STORAGE_KEY);
         localStorage.removeItem("mail_agent_user_email");
         localStorage.removeItem("mail_agent_user_name");
+        if (window.mailAgentDesktop?.setSessionToken) {
+          void window.mailAgentDesktop.setSessionToken("");
+        }
       }
       setSessionToken(null);
       setCurrentUser(null);

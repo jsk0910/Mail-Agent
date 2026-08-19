@@ -12,5 +12,7 @@ contextBridge.exposeInMainWorld("mailAgentDesktop", {
   analyzeMessage: (request: LocalAnalysisRequest) =>
     ipcRenderer.invoke("local-ai:analyze-message", request),
   getAiStatus: () => ipcRenderer.invoke("local-ai:status"),
-  openOAuth: (url: string) => ipcRenderer.invoke("desktop:open-oauth", url)
+  openOAuth: (url: string) => ipcRenderer.invoke("desktop:open-oauth", url),
+  getSessionToken: () => ipcRenderer.invoke("desktop:get-session-token"),
+  setSessionToken: (token: string) => ipcRenderer.invoke("desktop:set-session-token", token)
 });
