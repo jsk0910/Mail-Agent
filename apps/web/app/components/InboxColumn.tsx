@@ -36,6 +36,8 @@ interface InboxColumnProps {
   formatReceivedAt: (value: string) => string;
   getAccountBadge: (message: MessageSummary) => string;
   errorMessage: string;
+  onSyncAll?: () => void;
+  isSyncing?: boolean;
 }
 
 function renderEmptyState(
@@ -149,7 +151,9 @@ export function InboxColumn({
   onToggleFilter,
   searchQuery,
   selectedMessageId,
-  visibleMessages
+  visibleMessages,
+  onSyncAll,
+  isSyncing
 }: InboxColumnProps) {
   return (
     <section className={styles.column}>
@@ -158,9 +162,24 @@ export function InboxColumn({
           <h1 className={styles.title}>{activeViewLabel}</h1>
           <span className={styles.meta}>Unified mail list · {messagesCount} messages</span>
         </div>
-        <Button variant="primary" shortcut="C" tooltip="Compose new message" onClick={onCompose}>
-          Compose
-        </Button>
+        <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+          {onSyncAll && (
+            <Button
+              variant="secondary"
+              tooltip="Sync emails now"
+              onClick={onSyncAll}
+              disabled={isSyncing}
+            >
+              <span style={{ display: "inline-block", transform: isSyncing ? "rotate(360deg)" : "none", transition: isSyncing ? "transform 1s linear infinite" : "none" }}>
+                ↻
+              </span>
+              <span>{isSyncing ? "Syncing..." : "Sync"}</span>
+            </Button>
+          )}
+          <Button variant="primary" shortcut="C" tooltip="Compose new message" onClick={onCompose}>
+            Compose
+          </Button>
+        </div>
       </header>
 
       <div className={styles.searchZone}>

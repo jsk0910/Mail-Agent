@@ -822,6 +822,60 @@ export default function HomePage() {
     }
   }
 
+  async function handleSyncAll() {
+    if (accounts.length === 0) return;
+    for (const account of accounts) {
+      await handleTriggerSync(account.id);
+    }
+  }
+
+  useEffect(() => {
+    if (!sessionToken || dataMode === "demo" || accounts.length === 0) {
+      return;
+    }
+
+    let isAutoSyncing = false;
+
+    async function autoSync() {
+      if (isAutoSyncing || typeof window === "undefined" || document.hidden) {
+        return;
+      }
+      isAutoSyncing = true;
+      try {
+        const headers = getRequestHeaders();
+        for (const account of accounts) {
+          await fetch(`${apiBaseUrl}/sync/jobs`, {
+            method: "POST",
+            headers,
+            body: JSON.stringify({
+              accountId: account.id,
+              mode: "incremental",
+              trigger: "auto",
+              reason: "Background periodic auto-sync"
+            })
+          }).catch(() => null);
+        }
+        setReloadSequence((seq) => seq + 1);
+      } finally {
+        isAutoSyncing = false;
+      }
+    }
+
+    // Auto-sync every 20 seconds
+    const interval = setInterval(autoSync, 20000);
+
+    // Also auto-sync when window gains focus
+    const handleFocus = () => {
+      void autoSync();
+    };
+    window.addEventListener("focus", handleFocus);
+
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener("focus", handleFocus);
+    };
+  }, [sessionToken, dataMode, accounts]);
+
   useEffect(() => {
     if (!detailActionSuccess) {
       return;
@@ -2186,6 +2240,8 @@ export default function HomePage() {
             searchQuery={searchQuery}
             selectedMessageId={selectedMessageId}
             visibleMessages={visibleMessages}
+            onSyncAll={handleSyncAll}
+            isSyncing={Boolean(syncingAccountId)}
           />
         }
         detail={
