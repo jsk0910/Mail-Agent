@@ -3,10 +3,21 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { LocalAiRuntime, LocalAnalysisRequest } from "./local-ai";
 
-const webUrl = process.env.MAIL_AGENT_WEB_URL || "http://localhost:3000";
-const apiUrl = process.env.MAIL_AGENT_API_URL || "http://localhost:4000/api";
-const allowedOrigin = new URL(webUrl).origin;
-const allowedApiOrigin = new URL(apiUrl).origin;
+const defaultWebUrl = "https://mail-agent-web.up.railway.app";
+const defaultApiUrl = "https://mail-agent-api.up.railway.app/api";
+
+function resolveWebUrl(): string {
+  if (process.env.MAIL_AGENT_WEB_URL) return process.env.MAIL_AGENT_WEB_URL;
+  if (!app.isPackaged && process.env.NODE_ENV === "development") return "http://localhost:3000";
+  return defaultWebUrl;
+}
+
+function resolveApiUrl(): string {
+  if (process.env.MAIL_AGENT_API_URL) return process.env.MAIL_AGENT_API_URL;
+  if (!app.isPackaged && process.env.NODE_ENV === "development") return "http://localhost:4000/api";
+  return defaultApiUrl;
+}
+
 const localAi = new LocalAiRuntime();
 let mainWindow: BrowserWindow | null = null;
 let sessionToken = "";
@@ -33,6 +44,7 @@ function saveSessionToken(token: string) {
 
 function handleDeepLink(url: string) {
   if (!url.startsWith("mailagent://oauth")) return;
+  const webUrl = resolveWebUrl();
   const callback = new URL(url);
   const token = callback.searchParams.get("sessionToken");
   if (token) saveSessionToken(token);
@@ -45,11 +57,16 @@ function handleDeepLink(url: string) {
 }
 
 function createWindow() {
+  const webUrl = resolveWebUrl();
+  const allowedOrigin = new URL(webUrl).origin;
+
   const window = new BrowserWindow({
+    title: "Mail Agent",
     width: 1500,
     height: 960,
     minWidth: 1100,
     minHeight: 720,
+    backgroundColor: "#0b0f19",
     show: false,
     webPreferences: {
       preload: join(__dirname, "preload.js"),
@@ -71,6 +88,10 @@ function createWindow() {
       void shell.openExternal(url);
     }
   });
+  window.webContents.on("did-fail-load", (_event, errorCode, errorDescription, validatedURL) => {
+    console.error(`Failed to load ${validatedURL}: ${errorCode} ${errorDescription}`);
+  });
+
   void window.loadURL(webUrl);
 }
 
@@ -90,6 +111,10 @@ app.on("open-url", (event, url) => {
 app.whenReady().then(() => {
   app.setAsDefaultProtocolClient("mailagent");
   loadSessionToken();
+
+  const apiUrl = resolveApiUrl();
+  const allowedApiOrigin = new URL(apiUrl).origin;
+
   session.defaultSession.webRequest.onBeforeSendHeaders((details, callback) => {
     const requestOrigin = new URL(details.url).origin;
     const requestHeaders = { ...details.requestHeaders };
@@ -100,6 +125,7 @@ app.whenReady().then(() => {
     }
     callback({ requestHeaders });
   });
+
   ipcMain.handle("local-ai:status", () => localAi.isReady());
   ipcMain.handle("local-ai:analyze-message", (_event, request: LocalAnalysisRequest) =>
     localAi.analyze(request)
@@ -111,6 +137,7 @@ app.whenReady().then(() => {
     }
     return shell.openExternal(parsed.toString());
   });
+
   createWindow();
 });
 
