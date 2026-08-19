@@ -564,7 +564,6 @@ export default function HomePage() {
         return;
       }
 
-      setFetchState("loading");
       setErrorMessage("");
 
       if (dataMode === "demo") {
@@ -618,22 +617,14 @@ export default function HomePage() {
         const nextMessages = inboxData.items ?? [];
         const nextAccounts = accountsData.items ?? [];
 
-        setDemoDetailsById({});
         setMessages(nextMessages);
         setAccounts(nextAccounts);
-        setSelectedMessageId((current) =>
-          current && nextMessages.some((message) => message.id === current) ? current : null
-        );
         setFetchState(nextMessages.length > 0 ? "ready" : "empty");
       } catch (error) {
         if (ignore) {
           return;
         }
 
-        setDemoDetailsById({});
-        setMessages([]);
-        setAccounts([]);
-        setSelectedMessageId(null);
         setFetchState("error");
         setErrorMessage(
           error instanceof Error ? error.message : "Unable to load the connected inbox."
@@ -855,16 +846,33 @@ export default function HomePage() {
             })
           }).catch(() => null);
         }
-        setReloadSequence((seq) => seq + 1);
+
+        const [inboxResponse, accountsResponse] = await Promise.all([
+          fetch(`${apiBaseUrl}/mail/inbox`, { headers, cache: "no-store" }),
+          fetch(`${apiBaseUrl}/accounts`, { headers, cache: "no-store" })
+        ]);
+
+        if (inboxResponse.ok && accountsResponse.ok) {
+          const inboxData = (await inboxResponse.json()) as InboxResponse;
+          const accountsData = (await accountsResponse.json()) as AccountsResponse;
+          if (inboxData.items) {
+            setMessages(inboxData.items);
+          }
+          if (accountsData.items) {
+            setAccounts(accountsData.items);
+          }
+        }
+      } catch {
+        // silent catch during background auto-sync
       } finally {
         isAutoSyncing = false;
       }
     }
 
-    // Auto-sync every 20 seconds
-    const interval = setInterval(autoSync, 20000);
+    // Auto-sync smoothly every 45 seconds in background
+    const interval = setInterval(autoSync, 45000);
 
-    // Also auto-sync when window gains focus
+    // Also auto-sync smoothly when window gains focus
     const handleFocus = () => {
       void autoSync();
     };
