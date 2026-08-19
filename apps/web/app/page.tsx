@@ -16,7 +16,13 @@ import { InboxColumn } from "./components/InboxColumn";
 import { SettingsSheet } from "./components/SettingsSheet";
 import { createDemoInboxData } from "./demoData";
 
-const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:4000/api";
+const normalizeApiBaseUrl = (url?: string) => {
+  if (!url) return "http://localhost:4000/api";
+  const trimmed = url.trim().replace(/\/+$/, "");
+  return trimmed.endsWith("/api") ? trimmed : `${trimmed}/api`;
+};
+
+const apiBaseUrl = normalizeApiBaseUrl(process.env.NEXT_PUBLIC_API_BASE_URL);
 const defaultUserEmail = process.env.NEXT_PUBLIC_DEFAULT_USER_EMAIL || "dev@mail-agent.local";
 const defaultUserName =
   process.env.NEXT_PUBLIC_DEFAULT_USER_NAME || "Mail Agent Developer";
