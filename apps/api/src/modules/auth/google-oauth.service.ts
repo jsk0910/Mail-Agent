@@ -104,7 +104,7 @@ export class GoogleOAuthService {
       source: "session"
     };
     const accountOwner =
-      statePayload.user?.email && statePayload.user.email.trim().length > 0
+      statePayload.user?.source === "session" && statePayload.user.email
         ? statePayload.user
         : profileUser;
 
@@ -130,19 +130,20 @@ export class GoogleOAuthService {
         : undefined
     });
 
-    const desktopSession =
-      statePayload.clientType === "desktop"
-        ? await this.sessionService.createSessionForIdentity(
-            { email: accountOwner.email, name: accountOwner.name },
-            { clientType: "desktop", deviceLabel: "Mail Agent Desktop" }
-          )
-        : undefined;
+    const userSession = await this.sessionService.createSessionForIdentity(
+      { email: accountOwner.email, name: accountOwner.name },
+      {
+        clientType: statePayload.clientType,
+        deviceLabel: statePayload.clientType === "desktop" ? "Mail Agent Desktop" : "Mail Agent Web"
+      }
+    );
+
     const callbackParams = new URLSearchParams({
       status: "success",
       provider: "gmail",
-      accountId: account.id
+      accountId: account.id,
+      sessionToken: userSession.sessionToken
     });
-    if (desktopSession) callbackParams.set("sessionToken", desktopSession.sessionToken);
 
     return {
       item: toSharedAccount(account),
@@ -150,7 +151,7 @@ export class GoogleOAuthService {
         provider: "gmail",
         clientType: statePayload.clientType,
         hasRefreshToken: Boolean(tokenResponse.refresh_token || account.refreshTokenEncrypted),
-        sessionToken: desktopSession?.sessionToken,
+        sessionToken: userSession.sessionToken,
         returnUri: statePayload.returnUri,
         nextUrl: statePayload.returnUri
           ? `${statePayload.returnUri}${statePayload.returnUri.includes("?") ? "&" : "?"}${callbackParams.toString()}`

@@ -13,8 +13,17 @@ import {
 import { CommandPalette, CommandPaletteItem } from "./components/CommandPalette";
 import { DetailColumn } from "./components/DetailColumn";
 import { InboxColumn } from "./components/InboxColumn";
+import { LoginGate } from "./components/LoginGate";
 import { SettingsSheet } from "./components/SettingsSheet";
 import { createDemoInboxData } from "./demoData";
+
+const SESSION_STORAGE_KEY = "mail_agent_session_token";
+
+interface AuthUser {
+  id?: string;
+  email: string;
+  name: string;
+}
 
 const normalizeApiBaseUrl = (url?: string) => {
   if (!url) return "http://localhost:4000/api";
@@ -93,12 +102,31 @@ interface ComposerAppearance {
   fontFamily: "geist" | "mono" | "pretendard";
 }
 
-function getRequestHeaders() {
-  return {
-    "Content-Type": "application/json",
-    "x-user-email": defaultUserEmail,
-    "x-user-name": defaultUserName
+function getRequestHeaders(overrideToken?: string, overrideUser?: { email: string; name?: string }) {
+  const token =
+    overrideToken ||
+    (typeof window !== "undefined" ? localStorage.getItem(SESSION_STORAGE_KEY) : null);
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json"
   };
+  if (token) {
+    headers["Authorization"] = `Bearer ${token}`;
+    headers["x-session-token"] = token;
+  }
+  const email =
+    overrideUser?.email ||
+    (typeof window !== "undefined" ? localStorage.getItem("mail_agent_user_email") : null);
+  const name =
+    overrideUser?.name ||
+    (typeof window !== "undefined" ? localStorage.getItem("mail_agent_user_name") : null);
+  if (email) {
+    headers["x-user-email"] = email;
+    headers["x-user-name"] = name || email;
+  } else if (!token) {
+    headers["x-user-email"] = defaultUserEmail;
+    headers["x-user-name"] = defaultUserName;
+  }
+  return headers;
 }
 
 function formatReceivedAt(value: string) {
@@ -523,10 +551,19 @@ export default function HomePage() {
     hasAttachmentsOnly: false
   });
 
+  const [sessionToken, setSessionToken] = useState<string | null>(null);
+  const [currentUser, setCurrentUser] = useState<AuthUser | null>(null);
+  const [authLoading, setAuthLoading] = useState<boolean>(true);
+  const [authError, setAuthError] = useState<string | null>(null);
+
   useEffect(() => {
     let ignore = false;
 
     async function loadInbox() {
+      if (!sessionToken && dataMode !== "demo") {
+        return;
+      }
+
       setFetchState("loading");
       setErrorMessage("");
 
@@ -557,6 +594,11 @@ export default function HomePage() {
             cache: "no-store"
           })
         ]);
+
+        if (inboxResponse.status === 401 || accountsResponse.status === 401) {
+          handleLogout();
+          return;
+        }
 
         if (!inboxResponse.ok) {
           throw new Error(`Inbox request failed with status ${inboxResponse.status}.`);
@@ -604,26 +646,108 @@ export default function HomePage() {
     return () => {
       ignore = true;
     };
-  }, [dataMode, reloadSequence]);
+  }, [dataMode, reloadSequence, sessionToken]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
+      setAuthLoading(false);
       return;
     }
-    const params = new URLSearchParams(window.location.search);
-    if (params.get("status") === "success" && params.get("provider") === "gmail") {
-      const newAccountId = params.get("accountId");
-      setDetailActionSuccess("Google account connected successfully!");
-      window.history.replaceState({}, "", window.location.pathname);
-      setReloadSequence((seq) => seq + 1);
-      if (newAccountId) {
-        void handleTriggerSync(newAccountId);
+
+    async function checkAuthSession() {
+      try {
+        const params = new URLSearchParams(window.location.search);
+        const paramSessionToken = params.get("sessionToken");
+        const paramStatus = params.get("status");
+        const paramProvider = params.get("provider");
+        const newAccountId = params.get("accountId");
+
+        let activeToken = paramSessionToken || localStorage.getItem(SESSION_STORAGE_KEY);
+
+        if (paramSessionToken) {
+          localStorage.setItem(SESSION_STORAGE_KEY, paramSessionToken);
+          setSessionToken(paramSessionToken);
+          window.history.replaceState({}, "", window.location.pathname);
+          if (paramStatus === "success" && paramProvider === "gmail") {
+            setDetailActionSuccess("Google account connected successfully!");
+          }
+        }
+
+        if (activeToken) {
+          const res = await fetch(`${apiBaseUrl}/auth/session/me`, {
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${activeToken}`,
+              "x-session-token": activeToken
+            },
+            cache: "no-store"
+          });
+
+          if (res.ok) {
+            const data = await res.json();
+            setSessionToken(activeToken);
+            const userObj =
+              data.user || (data.email ? { email: data.email, name: data.name || data.email } : null);
+            if (userObj) {
+              setCurrentUser(userObj);
+              localStorage.setItem("mail_agent_user_email", userObj.email);
+              localStorage.setItem("mail_agent_user_name", userObj.name || userObj.email);
+            }
+            if (newAccountId) {
+              void handleTriggerSync(newAccountId, activeToken);
+            }
+          } else {
+            localStorage.removeItem(SESSION_STORAGE_KEY);
+            localStorage.removeItem("mail_agent_user_email");
+            localStorage.removeItem("mail_agent_user_name");
+            setSessionToken(null);
+            setCurrentUser(null);
+          }
+        } else {
+          setSessionToken(null);
+          setCurrentUser(null);
+        }
+      } catch (err) {
+        console.error("Session verification failed:", err);
+      } finally {
+        setAuthLoading(false);
       }
     }
+
+    void checkAuthSession();
   }, []);
+
+  async function handleLogout() {
+    try {
+      const token = typeof window !== "undefined" ? localStorage.getItem(SESSION_STORAGE_KEY) : null;
+      if (token) {
+        await fetch(`${apiBaseUrl}/auth/session/me`, {
+          method: "DELETE",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+            "x-session-token": token
+          }
+        }).catch(() => null);
+      }
+    } finally {
+      if (typeof window !== "undefined") {
+        localStorage.removeItem(SESSION_STORAGE_KEY);
+        localStorage.removeItem("mail_agent_user_email");
+        localStorage.removeItem("mail_agent_user_name");
+      }
+      setSessionToken(null);
+      setCurrentUser(null);
+      setMessages([]);
+      setAccounts([]);
+      setSelectedMessageId(null);
+      setIsSettingsOpen(false);
+    }
+  }
 
   async function handleConnectGoogle() {
     try {
+      setAuthError(null);
       const headers = getRequestHeaders();
       const isDesktop = Boolean(window.mailAgentDesktop);
       const returnUri = isDesktop ? "mailagent://oauth" : window.location.origin;
@@ -644,17 +768,18 @@ export default function HomePage() {
       }
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Failed to start Google OAuth";
+      setAuthError(message);
       setDetailActionError(message);
     }
   }
 
   const [syncingAccountId, setSyncingAccountId] = useState<string | null>(null);
 
-  async function handleTriggerSync(accountId: string) {
+  async function handleTriggerSync(accountId: string, tokenOverride?: string) {
     try {
       setSyncingAccountId(accountId);
       setDetailActionSuccess("Syncing emails from Gmail... Please wait a moment.");
-      const headers = getRequestHeaders();
+      const headers = getRequestHeaders(tokenOverride);
       const res = await fetch(`${apiBaseUrl}/sync/jobs`, {
         method: "POST",
         headers,
@@ -1921,6 +2046,42 @@ export default function HomePage() {
   const shouldShowDetailPanel =
     Boolean(selectedMessageId) || (isComposerOpen && composerMode === "compose");
 
+  if (authLoading) {
+    return (
+      <div style={{
+        minHeight: "100vh",
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        justifyContent: "center",
+        background: "#0b0f19",
+        color: "#94a3b8",
+        fontFamily: "var(--font-sans, sans-serif)",
+        gap: "12px"
+      }}>
+        <div style={{
+          width: "32px",
+          height: "32px",
+          border: "3px solid rgba(99, 102, 241, 0.2)",
+          borderTopColor: "#6366f1",
+          borderRadius: "50%",
+          animation: "spin 1s linear infinite"
+        }} />
+        <style>{`@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }`}</style>
+        <span>Loading Mail Agent...</span>
+      </div>
+    );
+  }
+
+  if (!sessionToken && dataMode !== "demo") {
+    return (
+      <LoginGate
+        onLogin={handleConnectGoogle}
+        error={authError || detailActionError}
+      />
+    );
+  }
+
   return (
     <>
       <AppShell
@@ -1935,6 +2096,8 @@ export default function HomePage() {
         }}
         sidebar={
           <AppSidebar
+            currentUser={currentUser}
+            onLogout={handleLogout}
             accounts={accounts}
             activeAccountId={filters.accountId}
             activeView={mailboxView}
@@ -2101,6 +2264,8 @@ export default function HomePage() {
         onSelect={runCommand}
       />
       <SettingsSheet
+        currentUser={currentUser}
+        onLogout={handleLogout}
         accounts={accounts}
         aiEnabledByAccount={aiEnabledByAccount}
         open={isSettingsOpen}

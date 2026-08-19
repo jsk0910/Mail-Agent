@@ -43,6 +43,8 @@ interface AppSidebarProps {
   onSettingsOpen: () => void;
   onViewSelect: (view: string) => void;
   smartViewItems: SmartViewItem[];
+  currentUser?: { email: string; name?: string } | null;
+  onLogout?: () => void;
 }
 
 function getStatusTone(account: Account) {
@@ -102,7 +104,9 @@ export function AppSidebar({
   onReconnectAccount,
   onSettingsOpen,
   onViewSelect,
-  smartViewItems
+  smartViewItems,
+  currentUser,
+  onLogout
 }: AppSidebarProps) {
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement | null>(null);
@@ -311,8 +315,38 @@ export function AppSidebar({
         </div>
       </section>
 
-      {/* Footer: Command Menu & Settings */}
+      {/* Footer: User profile, Command Menu & Settings */}
       <div className={styles.footer}>
+        {currentUser && (
+          <div style={{ padding: "8px 10px", borderBottom: "1px solid var(--border-soft)", marginBottom: "4px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: "8px" }}>
+            <div style={{ minWidth: 0, flex: 1 }}>
+              <div style={{ fontSize: "12px", fontWeight: 600, color: "var(--text-strong)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {currentUser.name || currentUser.email}
+              </div>
+              <div style={{ fontSize: "11px", color: "var(--text-secondary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {currentUser.email}
+              </div>
+            </div>
+            {onLogout && (
+              <button
+                type="button"
+                onClick={onLogout}
+                style={{
+                  background: "transparent",
+                  border: "none",
+                  color: "var(--text-secondary)",
+                  fontSize: "11px",
+                  cursor: "pointer",
+                  padding: "4px 6px",
+                  borderRadius: "4px",
+                  flexShrink: 0
+                }}
+              >
+                Sign out
+              </button>
+            )}
+          </div>
+        )}
         <button className={styles.footerLink} type="button" onClick={onCommandOpen}>
           <SearchIcon width={16} height={16} />
           <span className={styles.footerLabel}>Command menu</span>

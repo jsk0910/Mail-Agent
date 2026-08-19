@@ -4,6 +4,8 @@ import { Chip } from "./ui/Chip";
 import styles from "./SettingsSheet.module.css";
 
 interface SettingsSheetProps {
+  currentUser?: { email: string; name?: string } | null;
+  onLogout?: () => void;
   accounts: Account[];
   aiEnabledByAccount: Record<string, boolean>;
   open: boolean;
@@ -15,6 +17,8 @@ interface SettingsSheetProps {
 }
 
 export function SettingsSheet({
+  currentUser,
+  onLogout,
   accounts,
   aiEnabledByAccount,
   open,
@@ -51,6 +55,28 @@ export function SettingsSheet({
         </header>
 
         <div className={styles.body}>
+          {currentUser && (
+            <section className={styles.section}>
+              <div className={styles.sectionHeader}>
+                <h3 className={styles.sectionTitle}>Signed in user</h3>
+                {onLogout && (
+                  <Button compact type="button" variant="secondary" onClick={onLogout}>
+                    Sign out
+                  </Button>
+                )}
+              </div>
+              <div className={styles.cardList}>
+                <article className={styles.accountCard}>
+                  <div className={styles.accountCopy}>
+                    <span className={styles.accountTitle}>{currentUser.name || currentUser.email}</span>
+                    <span className={styles.accountMeta}>{currentUser.email}</span>
+                  </div>
+                  <Chip tone="active">Active Session</Chip>
+                </article>
+              </div>
+            </section>
+          )}
+
           <section className={styles.section}>
             <div className={styles.sectionHeader}>
               <h3 className={styles.sectionTitle}>Connected accounts</h3>
