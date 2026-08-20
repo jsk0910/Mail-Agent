@@ -43,9 +43,20 @@ export class LocalAiRuntime {
 
   private getBinaryPath() {
     const filename = process.platform === "win32" ? "llama-server.exe" : "llama-server";
-    return app.isPackaged
+    
+    // 1. Packaged or local resources
+    const bundled = app.isPackaged
       ? this.getResourcePath("bin", filename)
       : this.getResourcePath("bin", `${process.platform}-${process.arch}`, filename);
+    if (existsSync(bundled)) return bundled;
+
+    // 2. Common macOS homebrew locations
+    if (process.platform === "darwin") {
+      if (existsSync("/opt/homebrew/bin/llama-server")) return "/opt/homebrew/bin/llama-server";
+      if (existsSync("/usr/local/bin/llama-server")) return "/usr/local/bin/llama-server";
+    }
+
+    return bundled;
   }
 
   getModelPath(): string | null {
@@ -67,10 +78,12 @@ export class LocalAiRuntime {
     return null;
   }
 
-  getModelStatus() {
+  async getModelStatus() {
+    const ollamaReady = await this.isOllamaReady();
     const modelPath = this.getModelPath();
     return {
-      installed: Boolean(modelPath),
+      installed: Boolean(modelPath) || ollamaReady,
+      provider: ollamaReady ? "ollama" : "llama-cpp",
       modelPath: modelPath || undefined,
       isDownloading: this.isDownloading,
       downloadProgress: this.downloadProgress,
@@ -144,18 +157,74 @@ export class LocalAiRuntime {
     });
   }
 
+  private async isOllamaReady(): Promise<boolean> {
+    try {
+      const res = await fetch("http://127.0.0.1:11434/api/tags");
+      return res.ok;
+    } catch {
+      return false;
+    }
+  }
+
+  private async analyzeWithOllama(request: LocalAnalysisRequest): Promise<Record<string, unknown>> {
+    let modelName = "qwen2.5:3b";
+    try {
+      const tagsRes = await fetch("http://127.0.0.1:11434/api/tags");
+      if (tagsRes.ok) {
+        const data = (await tagsRes.json()) as { models?: Array<{ name: string }> };
+        const found = data.models?.find(
+          (m) => m.name.includes("qwen") || m.name.includes("llama") || m.name.includes("gemma")
+        );
+        if (found) modelName = found.name;
+      }
+    } catch {
+      // fallback
+    }
+
+    const response = await fetch("http://127.0.0.1:11434/v1/chat/completions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: modelName,
+        temperature: 0.1,
+        max_tokens: 1500,
+        response_format: { type: "json_object" },
+        messages: [
+          {
+            role: "system",
+            content: "업무 이메일을 분석해 summary, intent, keyPoints, category, priority, priorityReason, requiresReply, requiresAction, dueDate, suggestedReply, suggestedActions, confidence 필드를 가진 순수 JSON 객체를 한국어로 반환하세요. 본문에 없는 날짜를 만들지 마세요."
+          },
+          {
+            role: "user",
+            content: `보낸이: ${request.from}\n수신일: ${request.receivedAt}\n제목: ${request.subject}\n본문:\n${request.bodyText.slice(0, 4000)}`
+          }
+        ]
+      })
+    });
+
+    if (!response.ok) throw new Error(`Ollama 요청 실패 (${response.status})`);
+    const payload = (await response.json()) as { choices?: Array<{ message?: { content?: string } }> };
+    const content = payload.choices?.[0]?.message?.content;
+    if (!content) throw new Error("Ollama가 빈 분석 결과를 반환했습니다.");
+    return this.parseJsonResult(content);
+  }
+
   async start() {
     if (await this.isReady()) return;
 
     const binary = this.getBinaryPath();
-    const model = this.getModelPath();
-
-    if (!existsSync(binary)) {
-      throw new Error("로컬 AI 런타임 바이너리가 설치되지 않았습니다.");
-    }
+    let model = this.getModelPath();
 
     if (!model || !existsSync(model)) {
-      throw new Error("Qwen 모델(.gguf)이 없습니다. 모델을 다운로드하거나 models 폴더에 넣어주세요.");
+      model = await this.downloadDefaultModel();
+    }
+
+    if (!existsSync(binary)) {
+      throw new Error(
+        process.platform === "darwin"
+          ? "Mac에서는 Ollama (ollama run qwen2.5:3b)를 실행하시거나 llama-server를 설치해 주세요."
+          : "로컬 AI 런타임 바이너리를 찾을 수 없습니다."
+      );
     }
 
     this.process = spawn(
@@ -173,6 +242,7 @@ export class LocalAiRuntime {
   }
 
   async isReady() {
+    if (await this.isOllamaReady()) return true;
     try {
       const response = await fetch(`http://127.0.0.1:${this.port}/health`, {
         headers: { Authorization: `Bearer ${this.apiKey}` }
@@ -184,6 +254,10 @@ export class LocalAiRuntime {
   }
 
   async analyze(request: LocalAnalysisRequest) {
+    if (await this.isOllamaReady()) {
+      return this.analyzeWithOllama(request);
+    }
+
     await this.start();
     const response = await fetch(`http://127.0.0.1:${this.port}/v1/chat/completions`, {
       method: "POST",
