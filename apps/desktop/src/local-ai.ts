@@ -43,14 +43,12 @@ export class LocalAiRuntime {
 
   private getBinaryPath() {
     const filename = process.platform === "win32" ? "llama-server.exe" : "llama-server";
-    
-    // 1. Packaged or local resources
+
     const bundled = app.isPackaged
       ? this.getResourcePath("bin", filename)
       : this.getResourcePath("bin", `${process.platform}-${process.arch}`, filename);
     if (existsSync(bundled)) return bundled;
 
-    // 2. Common macOS homebrew locations
     if (process.platform === "darwin") {
       if (existsSync("/opt/homebrew/bin/llama-server")) return "/opt/homebrew/bin/llama-server";
       if (existsSync("/usr/local/bin/llama-server")) return "/usr/local/bin/llama-server";
@@ -62,13 +60,11 @@ export class LocalAiRuntime {
   getModelPath(): string | null {
     const userDir = this.getUserModelsDir();
 
-    // 1. Check in userData/models for any gguf
     if (existsSync(userDir)) {
       const userFiles = readdirSync(userDir).filter((f) => f.endsWith(".gguf"));
       if (userFiles.length > 0) return join(userDir, userFiles[0]);
     }
 
-    // 2. Check bundled resources/models
     const resDir = this.getResourcePath("models");
     if (existsSync(resDir)) {
       const resFiles = readdirSync(resDir).filter((f) => f.endsWith(".gguf"));
@@ -166,46 +162,100 @@ export class LocalAiRuntime {
     }
   }
 
-  private async analyzeWithOllama(request: LocalAnalysisRequest): Promise<Record<string, unknown>> {
-    let modelName = "qwen2.5:3b";
+  private async getAvailableOllamaModel(): Promise<string> {
     try {
       const tagsRes = await fetch("http://127.0.0.1:11434/api/tags");
       if (tagsRes.ok) {
         const data = (await tagsRes.json()) as { models?: Array<{ name: string }> };
-        const found = data.models?.find(
-          (m) => m.name.includes("qwen") || m.name.includes("llama") || m.name.includes("gemma")
-        );
-        if (found) modelName = found.name;
+        const models = data.models || [];
+        if (models.length > 0) {
+          const preferred = models.find(
+            (m) =>
+              m.name.includes("qwen") ||
+              m.name.includes("llama") ||
+              m.name.includes("gemma") ||
+              m.name.includes("mistral")
+          );
+          return preferred ? preferred.name : models[0].name;
+        }
       }
     } catch {
       // fallback
     }
+    return "qwen2.5:3b";
+  }
 
-    const response = await fetch("http://127.0.0.1:11434/v1/chat/completions", {
+  private async analyzeWithOllama(request: LocalAnalysisRequest): Promise<Record<string, unknown>> {
+    const modelName = await this.getAvailableOllamaModel();
+    const systemPrompt =
+      "업무 이메일을 분석해 summary, intent, keyPoints, category, priority, priorityReason, requiresReply, requiresAction, dueDate, suggestedReply, suggestedActions, confidence 필드를 가진 순수 JSON 객체를 한국어로 반환하세요. 본문에 없는 날짜를 만들지 마세요.";
+    const userPrompt = `보낸이: ${request.from}\n수신일: ${request.receivedAt}\n제목: ${request.subject}\n본문:\n${request.bodyText.slice(0, 4000)}`;
+
+    // 1. Try Ollama native /api/chat endpoint with format: "json"
+    try {
+      const response = await fetch("http://127.0.0.1:11434/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: modelName,
+          stream: false,
+          format: "json",
+          options: {
+            temperature: 0.1,
+            num_predict: 2048
+          },
+          messages: [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: userPrompt }
+          ]
+        })
+      });
+
+      if (response.ok) {
+        const data = (await response.json()) as {
+          message?: { content?: string; thinking?: string };
+          response?: string;
+        };
+        const rawContent = data.message?.content || data.response || data.message?.thinking;
+        if (rawContent && rawContent.trim().length > 0) {
+          return this.parseJsonResult(rawContent);
+        }
+      }
+    } catch {
+      // Fallback to OpenAI-compatible endpoint
+    }
+
+    // 2. Fallback to /v1/chat/completions
+    const fallbackResponse = await fetch("http://127.0.0.1:11434/v1/chat/completions", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         model: modelName,
         temperature: 0.1,
-        max_tokens: 1500,
-        response_format: { type: "json_object" },
+        max_tokens: 2048,
         messages: [
-          {
-            role: "system",
-            content: "업무 이메일을 분석해 summary, intent, keyPoints, category, priority, priorityReason, requiresReply, requiresAction, dueDate, suggestedReply, suggestedActions, confidence 필드를 가진 순수 JSON 객체를 한국어로 반환하세요. 본문에 없는 날짜를 만들지 마세요."
-          },
-          {
-            role: "user",
-            content: `보낸이: ${request.from}\n수신일: ${request.receivedAt}\n제목: ${request.subject}\n본문:\n${request.bodyText.slice(0, 4000)}`
-          }
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userPrompt }
         ]
       })
     });
 
-    if (!response.ok) throw new Error(`Ollama 요청 실패 (${response.status})`);
-    const payload = (await response.json()) as { choices?: Array<{ message?: { content?: string } }> };
-    const content = payload.choices?.[0]?.message?.content;
-    if (!content) throw new Error("Ollama가 빈 분석 결과를 반환했습니다.");
+    if (!fallbackResponse.ok) {
+      throw new Error(`Ollama 요청 실패 (${fallbackResponse.status}). 모델명: ${modelName}`);
+    }
+
+    const payload = (await fallbackResponse.json()) as {
+      choices?: Array<{ message?: { content?: string; reasoning_content?: string } }>;
+    };
+    const content =
+      payload.choices?.[0]?.message?.content || payload.choices?.[0]?.message?.reasoning_content;
+
+    if (!content || !content.trim()) {
+      throw new Error(
+        `Ollama (${modelName}) 모델이 빈 결과를 반환했습니다. 터미널에서 'ollama run ${modelName}' 정상 동작을 확인해 주세요.`
+      );
+    }
+
     return this.parseJsonResult(content);
   }
 
@@ -268,7 +318,7 @@ export class LocalAiRuntime {
       body: JSON.stringify({
         model: "qwen-local",
         temperature: 0.1,
-        max_tokens: 1500,
+        max_tokens: 2048,
         response_format: { type: "json_object" },
         messages: [
           {
@@ -290,11 +340,16 @@ export class LocalAiRuntime {
   }
 
   private parseJsonResult(raw: string): Record<string, unknown> {
-    const trimmed = raw.trim();
+    let clean = raw.trim();
+    // Strip <think>...</think> if present (DeepSeek or reasoning models)
+    clean = clean.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
+    // Strip markdown code fences ```json ... ```
+    clean = clean.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
+
     try {
-      return JSON.parse(trimmed) as Record<string, unknown>;
+      return JSON.parse(clean) as Record<string, unknown>;
     } catch {
-      const jsonMatch = trimmed.match(/\{[\s\S]*\}/);
+      const jsonMatch = clean.match(/\{[\s\S]*\}/);
       if (jsonMatch) {
         try {
           return JSON.parse(jsonMatch[0]) as Record<string, unknown>;
@@ -309,7 +364,7 @@ export class LocalAiRuntime {
           }
         }
       }
-      throw new Error(`로컬 AI 출력 파싱 실패: ${trimmed.slice(0, 150)}...`);
+      throw new Error(`로컬 AI 출력 파싱 실패: ${clean.slice(0, 150)}...`);
     }
   }
 
